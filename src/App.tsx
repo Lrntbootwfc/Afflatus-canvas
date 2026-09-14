@@ -24,6 +24,7 @@ import {
   signOut as firebaseSignOut,
   updateProfileInFirestore,
 } from './lib/firebase';
+import { setAuth } from './lib/affilApi';
 
 export default function App() {
   // Screen Router: 'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore'
@@ -52,6 +53,7 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       try {
         if (!fbUser) {
+          setAuth(null);
           setCurrentUser(null);
           setCurrentScreen('landing');
           setIsLoading(false);
@@ -64,6 +66,14 @@ export default function App() {
           profile = await syncUserProfileToFirestore(fbUser);
         }
 
+        // Wire Main Backend identity (x-user-id + optional Firebase token)
+        try {
+          const token = await fbUser.getIdToken();
+          setAuth(profile.id || fbUser.uid, token);
+        } catch {
+          setAuth(profile.id || fbUser.uid);
+        }
+
         setCurrentUser(profile);
         if (profile.profileCompleted) {
           setCurrentScreen('dashboard');
@@ -72,6 +82,7 @@ export default function App() {
         }
       } catch (err) {
         console.error('Session restore from Firestore failed:', err);
+        setAuth(null);
         setCurrentUser(null);
         setCurrentScreen('landing');
       } finally {
@@ -82,9 +93,27 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Keep Main Backend auth header in sync
+  useEffect(() => {
+    if (!currentUser?.id) {
+      setAuth(null);
+      return;
+    }
+    const fbUser = auth.currentUser;
+    if (fbUser) {
+      fbUser
+        .getIdToken()
+        .then((token) => setAuth(currentUser.id, token))
+        .catch(() => setAuth(currentUser.id));
+    } else {
+      setAuth(currentUser.id);
+    }
+  }, [currentUser?.id]);
+
   // Handle Login / Signup Success (profile already written to Firestore by auth helpers)
   const handleAuthSuccess = (profile: CreatorProfile, isNewSignup: boolean) => {
     setCurrentUser(profile);
+    setAuth(profile.id);
 
     if (isNewSignup || !profile.profileCompleted) {
       setCurrentScreen('onboarding');
@@ -93,23 +122,44 @@ export default function App() {
     }
   };
 
-  // Handle Profile Saved — persist to Firestore then update local state
+  // Handle Profile Saved — persist to Firestore + Main Backend profile model
   const handleProfileSaved = async (updatedProfile: CreatorProfile) => {
     const saved = await updateProfileInFirestore({
       ...updatedProfile,
       profileCompleted: true,
     });
     setCurrentUser(saved);
+    setAuth(saved.id);
+    // Sync dimensions to Main Backend (professions, location, etc.)
+    try {
+      const { default: affilApi } = await import('./lib/affilApi');
+      await affilApi.updateMyProfile({
+        name: saved.name,
+        bio: saved.bio,
+        location: saved.location,
+        primaryRole: saved.primaryRole,
+        secondaryRoles: saved.secondaryRoles,
+        professions: [
+          saved.primaryRole,
+          ...(saved.secondaryRoles || []),
+        ].filter(Boolean),
+        seekingRoles: saved.seekingRoles,
+        profileCompleted: true,
+      });
+    } catch (err) {
+      console.warn('[App] Main Backend profile sync skipped:', err);
+    }
     setCurrentScreen('dashboard');
   };
 
-  // Handle Logout — clear Firebase Auth session
+  // Handle Logout — clear Firebase Auth session + Main Backend identity
   const handleLogout = async () => {
     try {
       await firebaseSignOut();
     } catch (err) {
       console.warn('Sign out error:', err);
     }
+    setAuth(null);
     setCurrentUser(null);
     setCurrentScreen('landing');
   };

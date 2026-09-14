@@ -128,26 +128,51 @@ export const C1AssistantDrawer: React.FC<C1AssistantDrawerProps> = ({
     setLoading(true);
 
     try {
-      const res = await fetch('/api/assistant/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: promptToSend,
-          userId: currentUser?.id,
-          currentUserProfile: currentUser,
-        }),
-      });
+      const { default: affilApi } = await import('../../lib/affilApi');
+      const data: any = await affilApi.assistantChat(
+        promptToSend,
+        currentUser?.id,
+        currentUser
+      );
 
-      const data: AssistantChatResponse = await res.json();
+      if (data && data.success !== false) {
+        let matchedItems = data.matchedItems;
+        if ((!matchedItems || !matchedItems.length) && Array.isArray(data.candidates)) {
+          matchedItems = data.candidates.map((c: any) => ({
+            id: c.userId || c.profile?.id,
+            type: 'creator',
+            title: c.profile?.name || c.name || 'Creator',
+            subtitle: c.profile?.primaryRole || c.primaryRole || '',
+            score: c.score,
+            matchReasons: c.matchReasons,
+            itemData: c.profile,
+            meta: {
+              location: c.profile?.location || c.location,
+              professions: c.profile?.professions,
+            },
+          }));
+        }
 
-      if (res.ok && data.success) {
+        let text = data.message || 'Here is what I found.';
+        if (matchedItems?.length) {
+          const reasonLines = matchedItems
+            .slice(0, 3)
+            .map((m: any) => {
+              const reasons = (m.matchReasons || []).slice(0, 2).join('; ');
+              const pct = m.score != null ? ` (${Math.round(Number(m.score) * 100)}%)` : '';
+              return reasons ? `• ${m.title}${pct}: ${reasons}` : `• ${m.title}${pct}`;
+            })
+            .join('\n');
+          if (reasonLines) text = `${text}\n\n${reasonLines}`;
+        }
+
         const assistantMessage: ChatMessage = {
           id: `msg_ast_${Date.now()}`,
           sender: 'assistant',
-          text: data.message,
+          text,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           intent: data.intent,
-          matchedItems: data.matchedItems,
+          matchedItems,
           suggestedActions: data.suggestedActions,
         };
         setMessages((prev) => [...prev, assistantMessage]);
@@ -155,7 +180,7 @@ export const C1AssistantDrawer: React.FC<C1AssistantDrawerProps> = ({
         const errorMessage: ChatMessage = {
           id: `msg_err_${Date.now()}`,
           sender: 'assistant',
-          text: data.error || 'I had trouble fetching that info right now. Please try again in a moment.',
+          text: data?.error || 'I had trouble fetching that info right now. Please try again in a moment.',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           isError: true,
         };
