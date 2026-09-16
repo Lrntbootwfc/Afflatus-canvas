@@ -85,7 +85,9 @@ export const CreatorDetailModal: React.FC<CreatorDetailModalProps> = ({
                 <span>{creator.location || 'Mumbai, India'}</span>
               </div>
               <p className="font-mono font-bold text-[var(--text-primary)]">
-                ₹{(creator.dayRateUsd || 25000).toLocaleString('en-IN')}/day
+                {creator.dayRateUsd != null && creator.dayRateUsd > 0
+                  ? `₹${creator.dayRateUsd.toLocaleString('en-IN')}/day`
+                  : 'Rate on request'}
               </p>
             </div>
           </div>

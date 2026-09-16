@@ -944,7 +944,11 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
               <CheckCircle2 className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-xs font-bold text-[var(--text-primary)]">Collaboration Proposal Sent</p>
+              <p className="text-xs font-bold text-[var(--text-primary)]">
+                {/error|failed|must be signed|sign in|Network/i.test(toastMessage || '')
+                  ? 'Could not send proposal'
+                  : 'Collaboration Proposal Sent'}
+              </p>
               <p className="text-[11px] text-[var(--text-secondary)]">{toastMessage}</p>
             </div>
           </div>

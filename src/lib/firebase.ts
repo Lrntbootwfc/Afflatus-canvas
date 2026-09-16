@@ -89,7 +89,9 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 // Initialize Firebase Auth
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
-googleProvider.addScope('https://www.googleapis.com/auth/gmail.send');
+// Basic Google sign-in only (profile + email). Do NOT request gmail.send on login —
+// that sensitive scope triggers Google's "app isn't verified" warning until OAuth verification.
+// Request Gmail scopes only in a dedicated "Connect Gmail" flow after verification.
 googleProvider.addScope('https://www.googleapis.com/auth/userinfo.email');
 googleProvider.addScope('https://www.googleapis.com/auth/userinfo.profile');
 googleProvider.setCustomParameters({ prompt: 'select_account' });
@@ -222,53 +224,10 @@ export async function signInWithGoogle(fallbackEmail?: string, fallbackName?: st
       console.info('[Auth] Google Sign-In popup closed or dismissed by user.');
       throw error;
     } else if (error.code === 'auth/unauthorized-domain' || error.message?.includes('unauthorized-domain')) {
-      console.warn('[Auth] Firebase authorized-domain restriction active in preview environment. Activating seamless Google Account bridge.');
-      // Auto-fallback to Google session bridge
-      const targetEmail = fallbackEmail || '0105cs221067@oriental.ac.in';
-      const targetName = fallbackName || (targetEmail.includes('@') ? targetEmail.split('@')[0] : 'Filmmaker');
-      const fallbackUid = `google_${targetEmail.replace(/[^a-zA-Z0-9]/g, '_')}`;
-      
-      const syntheticUser: Partial<FirebaseUser> & { uid: string; email: string | null; displayName: string | null; photoURL: string | null } = {
-        uid: fallbackUid,
-        email: targetEmail,
-        displayName: targetName,
-        photoURL: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=300',
-      };
-
-      let profile: CreatorProfile;
-      try {
-        profile = await syncUserProfileToFirestore(syntheticUser as FirebaseUser, {
-          email: targetEmail,
-          name: targetName,
-          primaryRole: 'Cinematographer',
-        });
-      } catch (fErr) {
-        profile = {
-          id: fallbackUid,
-          name: targetName,
-          email: targetEmail,
-          username: targetEmail.split('@')[0],
-          avatarUrl: syntheticUser.photoURL || '',
-          bio: '',
-          primaryRole: '',
-          secondaryRoles: [],
-          seekingRoles: [],
-          location: '',
-          travelRadiusMiles: 0,
-          dayRateUsd: 0,
-          hourlyRateUsd: 0,
-          pastBudgetTiers: [],
-          communicationStyle: 'collaborative_brainstormer',
-          userRole: 'collaborator',
-          gearItems: [],
-          portfolios: [],
-          workLinks: [],
-          socialLinks: {},
-          profileCompleted: false,
-          createdAt: new Date().toISOString(),
-        };
-      }
-      return { user: syntheticUser, profile };
+      console.error('[Auth] Unauthorized domain. Add this domain in Firebase Console → Authentication → Settings → Authorized domains.');
+      throw new Error(
+        'This domain is not authorized for Google sign-in. Add it under Firebase Authentication → Authorized domains, then try again.'
+      );
     } else {
       console.error('Google Sign In Error:', error);
       throw error;
@@ -319,6 +278,7 @@ export async function signUpWithEmail(email: string, pass: string, name?: string
  * Sign Out
  */
 export async function signOut(): Promise<void> {
+  setCachedGmailAccessToken(null);
   await fbSignOut(auth);
 }
 
@@ -697,12 +657,21 @@ export async function createConnectionRequest(params: {
   taskId?: string;
 }): Promise<{ connection: ConnectionRequest; alreadyExists: boolean }> {
   const current = auth.currentUser;
-  if (!current || current.uid !== params.senderId) {
+  if (!current) {
     throw new Error('You must be signed in as the sender to create a connection request.');
   }
-  if (params.senderId === params.recipientId) {
+  // Always use Firebase Auth uid as sender — never trust a stale profile id alone
+  const senderId = current.uid;
+  if (senderId !== params.senderId) {
+    console.warn('[createConnectionRequest] senderId mismatch; using auth.uid', {
+      provided: params.senderId,
+      authUid: senderId,
+    });
+  }
+  if (senderId === params.recipientId) {
     throw new Error('You cannot connect with yourself.');
   }
+  params = { ...params, senderId };
 
   // Duplicate check
   const existing = await fetchCollectionSafe<ConnectionRequest>('connections');
@@ -722,17 +691,27 @@ export async function createConnectionRequest(params: {
     id,
     senderId: params.senderId,
     recipientId: params.recipientId,
-    message: params.message,
+    message: params.message || '',
     status: 'pending',
     createdAt: new Date().toISOString(),
-    projectId: params.projectId,
-    taskId: params.taskId,
   };
+  // Firestore rejects `undefined` field values — only include optional fields when set
+  if (params.projectId) connection.projectId = params.projectId;
+  if (params.taskId) connection.taskId = params.taskId;
 
-  await setDoc(doc(db, 'connections', id), {
-    ...connection,
+  const payload: Record<string, unknown> = {
+    id: connection.id,
+    senderId: connection.senderId,
+    recipientId: connection.recipientId,
+    message: connection.message,
+    status: connection.status,
+    createdAt: connection.createdAt,
     createdAtTs: serverTimestamp(),
-  });
+  };
+  if (connection.projectId) payload.projectId = connection.projectId;
+  if (connection.taskId) payload.taskId = connection.taskId;
+
+  await setDoc(doc(db, 'connections', id), payload);
 
   try {
     await createNotification({

@@ -80,7 +80,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         : `${identifier.trim().toLowerCase().replace(/^@/, '')}@afflatus.local`;
 
       if (loginMethod === 'username' && !identifier.includes('@')) {
-        // Fallback: try server for legacy username accounts, then still prefer Firestore if present
+        // Username-only accounts must resolve to a real Firebase email session.
+        // Never call onLoginSuccess with a server profile without Firebase Auth.
         const res = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -92,17 +93,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to authenticate');
-        // If legacy user has a real email, attempt Firebase session so profile lives in Firestore
-        if (data.fullProfile?.email && data.fullProfile.email.includes('@')) {
-          try {
-            const { profile } = await signInWithEmail(data.fullProfile.email, password);
-            onLoginSuccess(profile, false);
-            return;
-          } catch {
-            // continue with server profile for this session only
-          }
+        const resolvedEmail = data.fullProfile?.email;
+        if (!resolvedEmail || !String(resolvedEmail).includes('@') || String(resolvedEmail).endsWith('@afflatus.local')) {
+          throw new Error(
+            'This account cannot sign in with username only. Use the email associated with your account, or continue with Google.'
+          );
         }
-        onLoginSuccess(data.fullProfile, false);
+        const { profile } = await signInWithEmail(resolvedEmail, password);
+        onLoginSuccess(profile, false);
         return;
       }
 

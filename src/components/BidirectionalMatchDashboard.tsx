@@ -248,7 +248,7 @@ export const BidirectionalMatchDashboard: React.FC<BidirectionalMatchDashboardPr
                           <span>•</span>
                           <span className="flex items-center gap-1 font-mono font-bold text-[var(--text-primary)]">
                             <span className="text-xs text-[#E58B13] font-bold">₹</span>
-                            ₹{(collab?.dayRateUsd || 25000).toLocaleString('en-IN')}/day
+                            {collab?.dayRateUsd != null && collab.dayRateUsd > 0 ? `₹${collab.dayRateUsd.toLocaleString('en-IN')}/day` : 'Rate on request'}
                           </span>
                           <span>•</span>
                           <span>

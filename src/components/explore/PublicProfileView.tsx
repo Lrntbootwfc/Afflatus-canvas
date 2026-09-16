@@ -309,7 +309,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Verified Rate</p>
                   <p className="font-mono font-bold text-[var(--accent-amber)] mt-0.5">
-                    ₹{(creator.dayRateUsd || 0).toLocaleString('en-IN')}/day
+                    {creator.dayRateUsd > 0 ? `₹${creator.dayRateUsd.toLocaleString('en-IN')}/day` : 'Rate on request'}
                   </p>
                 </div>
 
@@ -584,7 +584,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                     Collaborate with {creator.name}
                   </h3>
                   <p className="text-[11px] text-[var(--text-muted)]">
-                    {creator.primaryRole} • ₹{(creator.dayRateUsd || 0).toLocaleString('en-IN')}/day
+                    {creator.primaryRole} • {creator.dayRateUsd > 0 ? `₹${creator.dayRateUsd.toLocaleString('en-IN')}/day` : 'Rate on request'}
                   </p>
                 </div>
               </div>

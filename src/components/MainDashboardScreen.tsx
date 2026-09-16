@@ -542,7 +542,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
                       {selectedCreator.location}
                     </span>
                     <span className="text-xs font-mono font-bold text-[var(--text-primary)]">
-                      ₹{(selectedCreator.dayRateUsd || 25000).toLocaleString('en-IN')}/day
+                      {selectedCreator.dayRateUsd > 0 ? `₹${selectedCreator.dayRateUsd.toLocaleString('en-IN')}/day` : 'Rate on request'}
                     </span>
                   </div>
                 </div>
@@ -657,7 +657,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
                   Connect with {connectCreator.name}
                 </h3>
                 <p className="text-[11px] text-[var(--text-muted)]">
-                  {connectCreator.primaryRole} • ₹{(connectCreator.dayRateUsd || 25000).toLocaleString('en-IN')}/day
+                  {connectCreator.primaryRole}{connectCreator.dayRateUsd > 0 ? ` • ₹${connectCreator.dayRateUsd.toLocaleString('en-IN')}/day` : ''}
                 </p>
               </div>
             </div>

@@ -103,7 +103,13 @@ export const CreatorCard: React.FC<CreatorCardProps> = ({ creator, onOpenDetail,
               <span className="truncate">{creator.location || 'Mumbai, IN'}</span>
             </div>
             <div className="font-mono font-bold text-[var(--text-primary)] text-xs">
-              ₹{(creator.dayRateUsd || 25000).toLocaleString('en-IN')}<span className="text-[10px] font-normal text-[var(--text-muted)]">/day</span>
+              {creator.dayRateUsd != null && creator.dayRateUsd > 0 ? (
+              <>
+              ₹{creator.dayRateUsd.toLocaleString('en-IN')}<span className="text-[10px] font-normal text-[var(--text-muted)]">/day</span>
+              </>
+            ) : (
+              <span className="text-[10px] font-normal text-[var(--text-muted)]">Rate on request</span>
+            )}
             </div>
           </div>
         </div>
