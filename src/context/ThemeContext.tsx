@@ -453,7 +453,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (legacyTheme === 'midnight') return 'midnight';
     if (legacyTheme === 'emerald') return 'emerald';
     if (legacyTheme === 'monochrome') return 'monochrome';
-    return 'luxury-atelier';
+    return 'monochrome';
   });
 
   // Load saved mode

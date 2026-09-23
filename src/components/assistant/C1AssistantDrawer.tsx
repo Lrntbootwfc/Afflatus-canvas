@@ -240,27 +240,6 @@ export const C1AssistantDrawer: React.FC<C1AssistantDrawerProps> = ({
 
   return (
     <>
-      {/* 1. Persistent Floating Button (Accessible Across Screens) */}
-      {!isOpen && (
-        <button
-          id="c1-assistant-floating-btn"
-          onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 rounded-full bg-gradient-to-r from-[#F7E7CE] via-[#E8C793] to-[#D5A866] text-[#140E08] font-bold text-xs shadow-2xl hover:scale-105 active:scale-95 transition-all cursor-pointer group border border-[#E5C38C]/60 hover:shadow-[0_0_25px_rgba(229,195,140,0.45)]"
-          title="Open C1 AI Copilot"
-          aria-label="Open C1 AI Copilot"
-        >
-          <div className="relative flex items-center justify-center">
-            <Sparkles className="w-4 h-4 fill-current group-hover:rotate-12 transition-transform" />
-            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500" />
-          </div>
-          <span className="tracking-wide font-extrabold">Ask AI</span>
-          <span className="px-1.5 py-0.5 rounded-md bg-black/15 text-[10px] uppercase font-mono tracking-wider font-extrabold text-[#140E08]">
-            Copilot
-          </span>
-        </button>
-      )}
-
       {/* 2. Interactive Chat Panel / Drawer */}
       {isOpen && (
         <div

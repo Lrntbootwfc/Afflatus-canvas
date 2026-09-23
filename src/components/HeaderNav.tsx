@@ -11,6 +11,7 @@ import {
   Compass,
   Bell,
   MessageSquare,
+  Users,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { UserAvatar } from './UserAvatar';
@@ -27,6 +28,7 @@ interface HeaderNavProps {
   onOpenThemes: () => void;
   onOpenAssistant?: () => void;
   onOpenMessenger?: (connectionId?: string) => void;
+  onNavigateToProfile?: (creatorId: string) => void;
 }
 
 export const HeaderNav: React.FC<HeaderNavProps> = ({
@@ -38,6 +40,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   onOpenThemes,
   onOpenAssistant,
   onOpenMessenger,
+  onNavigateToProfile,
 }) => {
   const { mode, toggleTheme, palette, availablePalettes } = useTheme();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -137,19 +140,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
           {/* Right Controls: Themes, Light/Dark Mode & Auth/Profile */}
           <div className="flex items-center gap-2">
             
-            {/* C1 AI Assistant Header Button */}
-            {onOpenAssistant && (
-              <button
-                id="header-c1-btn"
-                onClick={onOpenAssistant}
-                className="px-3 py-1.5 rounded-full bg-[var(--accent-amber)]/15 hover:bg-[var(--accent-amber)]/25 text-[var(--accent-amber)] border border-[var(--accent-amber)]/40 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95 text-xs font-bold"
-                title="Open C1 AI Copilot"
-                aria-label="Open C1 AI Copilot"
-              >
-                <Sparkles className="w-3.5 h-3.5 fill-current" />
-                <span className="hidden sm:inline">Ask C1</span>
-              </button>
-            )}
+            {/* C1 AI Assistant Header Button (Removed) */}
 
             {/* Messages */}
             {currentUser && onOpenMessenger && (
@@ -262,6 +253,18 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                         {currentUser.primaryRole}
                       </span>
                     </div>
+
+                    <button
+                      id="dropdown-dashboard"
+                      onClick={() => {
+                        setIsDropdownOpen(false);
+                        onNavigate('dashboard');
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)] transition-colors text-left cursor-pointer md:hidden"
+                    >
+                      <Users className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
+                      <span>Creator Matches</span>
+                    </button>
 
                     <button
                       id="dropdown-explore"

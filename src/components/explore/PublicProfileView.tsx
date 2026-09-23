@@ -15,16 +15,24 @@ import {
   Sparkles,
   Award,
   Link as LinkIcon,
+  Loader2,
 } from 'lucide-react';
-import type { CreatorProfile, Project, WorkShowcase } from '../../types';
+import type { CreatorProfile, Project, WorkShowcase, Post } from '../../types';
 import { UserAvatar } from '../UserAvatar';
 import { WorkCard } from './WorkCard';
 import { ProjectCard } from './ProjectCard';
+import { PostCard } from '../feed/PostCard';
+import { CreatePostInput } from '../feed/CreatePostInput';
+import affilApi from '../../lib/affilApi';
 import {
   getProfileFromFirestore,
   fetchExploreFeedFromFirestore,
   createConnectionRequest,
+  getConnectionsForUser,
+  submitCollaborationFeedback,
+  toggleCollaborationStatus,
 } from '../../lib/firebase';
+import { FeedbackModal } from './FeedbackModal';
 
 interface PublicProfileViewProps {
   creatorId: string;
@@ -51,10 +59,11 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
   const [leadProjects, setLeadProjects] = useState<Project[]>([]);
   const [participatedProjects, setParticipatedProjects] = useState<Project[]>([]);
   const [works, setWorks] = useState<WorkShowcase[]>([]);
+  const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'works' | 'projects' | 'about' | 'gear'>('works');
+  const [activeTab, setActiveTab] = useState<'works' | 'posts' | 'projects' | 'about' | 'gear'>('works');
 
   // Connect / Proposal modal state
   const [showConnectModal, setShowConnectModal] = useState<boolean>(false);
@@ -64,6 +73,14 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
     type: 'success' | 'info' | 'error';
     message: string;
   } | null>(null);
+
+  // Feedback modal state
+  const [showFeedbackModal, setShowFeedbackModal] = useState<boolean>(false);
+  const [canLeaveFeedback, setCanLeaveFeedback] = useState<boolean>(false);
+  const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
+  const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null);
+  const [isConnectionLoading, setIsConnectionLoading] = useState<boolean>(true);
+
 
   useEffect(() => {
     let isMounted = true;
@@ -97,6 +114,13 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
         setLeadProjects(lead);
         setParticipatedProjects(participated);
 
+        try {
+          const userPostsData = await affilApi.getUserPosts(creatorId);
+          if (isMounted) setUserPosts(userPostsData.posts || []);
+        } catch (e) {
+          console.error('Failed to fetch posts:', e);
+        }
+
         if (creatorWorks.length > 0) setActiveTab('works');
         else if (lead.length > 0) setActiveTab('projects');
         else setActiveTab('about');
@@ -111,11 +135,47 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
       }
     };
 
+    const checkCollaborationStatus = async () => {
+      if (!currentUser?.id || !creatorId || currentUser.id === creatorId) {
+        if (isMounted) setIsConnectionLoading(false);
+        return;
+      }
+      try {
+        const connections = await getConnectionsForUser(currentUser.id);
+        const relevantConnections = connections.filter(c => c.recipientId === creatorId || c.senderId === creatorId);
+
+        const connection = relevantConnections.find(c => c.status === 'collaborating') 
+          || relevantConnections.find(c => c.status === 'completed')
+          || relevantConnections.find(c => c.status === 'accepted')
+          || relevantConnections.find(c => c.status === 'pending')
+          || relevantConnections[0];
+
+
+
+        if (isMounted) {
+          if (connection) {
+            setConnectionStatus(connection.status);
+            setActiveConnectionId(connection.id);
+            
+            const hasGivenFeedback = connection.feedbackGivenBy?.includes(currentUser.id) || false;
+            setCanLeaveFeedback(!hasGivenFeedback && (connection.status === 'collaborating' || connection.status === 'completed'));
+          }
+          setIsConnectionLoading(false);
+        }
+      } catch (err: any) {
+        console.error('Failed to check collaboration status:', err);
+        if (isMounted) {
+          setIsConnectionLoading(false);
+        }
+      }
+    };
+
     fetchPublicData();
+    checkCollaborationStatus();
     return () => {
       isMounted = false;
     };
-  }, [creatorId]);
+  }, [creatorId, currentUser?.id]);
 
   const isViewingSelf = currentUser?.id === creatorId;
 
@@ -159,6 +219,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
           type: 'success',
           message: `Proposal successfully delivered to ${creator.name}!`,
         });
+        setConnectionStatus('pending');
       }
       setTimeout(() => {
         setShowConnectModal(false);
@@ -170,6 +231,17 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
       });
     } finally {
       setIsSubmittingConnect(false);
+    }
+  };
+
+  const handleStartCollaboration = async () => {
+    if (!activeConnectionId || !currentUser?.id) return;
+    try {
+      const updated = await toggleCollaborationStatus(activeConnectionId, currentUser.id);
+      setConnectionStatus(updated.status);
+      setCanLeaveFeedback(updated.status === 'collaborating' || updated.status === 'completed');
+    } catch (err) {
+      console.error('Failed to start collaboration:', err);
     }
   };
 
@@ -190,14 +262,39 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
           </button>
 
           {creator && !isViewingSelf && (
-            <button
-              id={`header-connect-btn-${creator.id}`}
-              onClick={handleInitiateConnect}
-              className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>Connect / Collaborate</span>
-            </button>
+            isConnectionLoading ? (
+              <button
+                disabled
+                className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] text-[var(--text-primary)] inline-flex items-center gap-1.5 opacity-60 cursor-default"
+              >
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Checking...</span>
+              </button>
+            ) : (!connectionStatus || connectionStatus === 'declined') ? (
+              <button
+                id={`header-connect-btn-${creator.id}`}
+                onClick={handleInitiateConnect}
+                className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Connect / Collaborate</span>
+              </button>
+            ) : connectionStatus === 'accepted' ? (
+              <button
+                onClick={handleStartCollaboration}
+                className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all"
+              >
+                <span>Start Collaboration</span>
+              </button>
+            ) : (
+              <button
+                disabled
+                className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] text-[var(--text-primary)] inline-flex items-center gap-1.5 opacity-80 cursor-default"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
+                <span className="capitalize">{connectionStatus}</span>
+              </button>
+            )
           )}
         </div>
       </div>
@@ -283,15 +380,51 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
 
                 {/* Primary Action Button */}
                 {!isViewingSelf && (
-                  <div className="w-full sm:w-auto pt-2 sm:pt-0">
-                    <button
-                      id={`connect-profile-btn-${creator.id}`}
-                      onClick={handleInitiateConnect}
-                      className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-lg inline-flex items-center justify-center gap-2 cursor-pointer transition-all"
-                    >
-                      <Send className="w-4 h-4" />
-                      <span>Connect / Collaborate</span>
-                    </button>
+                  <div className="w-full sm:w-auto pt-2 sm:pt-0 flex flex-col gap-2">
+
+                    {isConnectionLoading ? (
+                      <button
+                        disabled
+                        className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] text-[var(--text-primary)] inline-flex items-center justify-center gap-2 cursor-default opacity-60"
+                      >
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Checking status...</span>
+                      </button>
+                    ) : (!connectionStatus || connectionStatus === 'declined') ? (
+                      <button
+                        id={`connect-profile-btn-${creator.id}`}
+                        onClick={handleInitiateConnect}
+                        className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-lg inline-flex items-center justify-center gap-2 cursor-pointer transition-all"
+                      >
+                        <Send className="w-4 h-4" />
+                        <span>Connect / Collaborate</span>
+                      </button>
+                    ) : connectionStatus === 'accepted' ? (
+                      <button
+                        onClick={handleStartCollaboration}
+                        className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-lg inline-flex items-center justify-center gap-2 cursor-pointer transition-all"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        <span>Start Collaboration</span>
+                      </button>
+                    ) : (
+                      <button
+                        disabled
+                        className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] text-[var(--text-primary)] inline-flex items-center justify-center gap-2 cursor-default opacity-80"
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-[var(--accent-amber)]" />
+                        <span className="capitalize">{connectionStatus}</span>
+                      </button>
+                    )}
+                    {canLeaveFeedback && (
+                      <button
+                        onClick={() => setShowFeedbackModal(true)}
+                        className="w-full sm:w-auto px-6 py-2.5 rounded-full text-xs font-bold bg-[var(--card-inner-bg)] hover:bg-[var(--card-inner-bg)]/80 text-[var(--text-primary)] border border-[var(--card-border)] shadow-sm inline-flex items-center justify-center gap-2 cursor-pointer transition-all"
+                      >
+                        <Award className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
+                        <span>Leave Feedback</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -323,7 +456,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Collaborative Projects</p>
                   <p className="font-semibold text-[var(--text-primary)] mt-0.5">
-                    {allProjects.length} {allProjects.length === 1 ? 'Project' : 'Projects'}
+                    {creator.collaborationCount || 0} {(creator.collaborationCount === 1) ? 'Project' : 'Projects'}
                   </p>
                 </div>
               </div>
@@ -342,6 +475,18 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
             >
               <Layers className="w-3.5 h-3.5" />
               <span>Public Works ({works.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('posts')}
+              className={`px-4 py-2 rounded-full text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shrink-0 ${
+                activeTab === 'posts'
+                  ? 'bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)]'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--card-inner-bg)]'
+              }`}
+            >
+              <Film className="w-3.5 h-3.5" />
+              <span>Posts ({userPosts.length})</span>
             </button>
 
             <button
@@ -394,20 +539,72 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 </div>
               </div>
 
-              {works.length === 0 ? (
+              {works.length === 0 && (!creator.portfolios || creator.portfolios.length === 0) ? (
                 <div className="card-warm-white p-12 rounded-3xl border border-[var(--card-border)] text-center space-y-3">
                   <Layers className="w-10 h-10 text-[var(--text-muted)] mx-auto" />
                   <p className="text-sm font-semibold text-[var(--text-primary)]">No public showcases published yet.</p>
                   <p className="text-xs text-[var(--text-secondary)]">Check back as {creator.name} updates their public media gallery.</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {works.map((work) => (
-                    <WorkCard
-                      key={work.id}
-                      work={work}
-                      onOpenDetail={() => onViewWorkDetail(work)}
-                    />
+                <div className="space-y-8">
+                  {/* Portfolio Images */}
+                  {creator.portfolios && creator.portfolios.length > 0 && (
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                      {creator.portfolios.map((portfolio) => (
+                        <div key={portfolio.id} className="relative group rounded-xl overflow-hidden bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] aspect-square">
+                          {portfolio.rawFileUrl && (
+                            <img src={portfolio.rawFileUrl} alt={portfolio.title || 'Portfolio'} className="w-full h-full object-cover" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Featured Works */}
+                  {works.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {works.map((work) => (
+                        <WorkCard
+                          key={work.id}
+                          work={work}
+                          onOpenDetail={() => onViewWorkDetail(work)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 1.5 POSTS */}
+          {activeTab === 'posts' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="font-editorial text-xl font-bold text-[var(--text-primary)]">Posts & Updates</h2>
+                  <p className="text-xs text-[var(--text-secondary)]">Thoughts, behind-the-scenes, and quick updates from {creator.name}.</p>
+                </div>
+              </div>
+
+              {currentUser && currentUser.id === creator.id && (
+                <CreatePostInput currentUser={currentUser} onPostCreated={() => {
+                  affilApi.getUserPosts(creator.id).then((res) => setUserPosts(res.posts || []));
+                }} />
+              )}
+
+              {userPosts.length === 0 ? (
+                <div className="card-warm-white p-12 rounded-3xl border border-[var(--card-border)] text-center space-y-3">
+                  <Film className="w-10 h-10 text-[var(--text-muted)] mx-auto" />
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">No posts published yet.</p>
+                  <p className="text-xs text-[var(--text-secondary)]">Check back later for updates from {creator.name}.</p>
+                </div>
+              ) : (
+                <div className="columns-1 sm:columns-2 lg:columns-3 gap-6 space-y-6">
+                  {userPosts.map((post) => (
+                    <div key={post.id} className="break-inside-avoid mb-6">
+                      <PostCard post={post} currentUserId={currentUser?.id || ''} />
+                    </div>
                   ))}
                 </div>
               )}
@@ -529,6 +726,36 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                           <span className="truncate">{link.title || link.platform}</span>
                           <ExternalLink className="w-3.5 h-3.5 text-[var(--text-muted)] group-hover:text-[var(--accent-amber)] shrink-0" />
                         </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Collaboration Profile Ratings */}
+                {creator.collaborationProfile && (
+                  <div className="card-warm-white p-6 rounded-3xl border border-[var(--card-border)] space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Peer Ratings</h4>
+                      <span className="text-[10px] bg-[var(--card-inner-bg)] px-2 py-0.5 rounded-full border border-[var(--card-inner-border)] text-[var(--text-secondary)]">
+                        {creator.collaborationProfile.feedbackCount || 0} Reviews
+                      </span>
+                    </div>
+                    <div className="space-y-3">
+                      {Object.entries(creator.collaborationProfile)
+                        .filter(([k]) => k !== 'feedbackCount')
+                        .map(([trait, score]) => (
+                        <div key={trait}>
+                          <div className="flex items-center justify-between text-[10px] font-semibold text-[var(--text-primary)] mb-1 uppercase tracking-wider">
+                            <span>{trait.replace('_', ' ')}</span>
+                            <span>{Number(score).toFixed(1)}/10</span>
+                          </div>
+                          <div className="h-1.5 w-full bg-[var(--card-inner-bg)] rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-[var(--accent-amber)] rounded-full"
+                              style={{ width: `${(Number(score) / 10) * 100}%` }}
+                            />
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -657,6 +884,17 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {showFeedbackModal && creator && currentUser && (
+        <FeedbackModal
+          creator={creator}
+          currentUser={currentUser}
+          onClose={() => setShowFeedbackModal(false)}
+          onSubmit={async (ratings) => {
+            await submitCollaborationFeedback(creator.id, ratings);
+          }}
+        />
       )}
     </div>
   );

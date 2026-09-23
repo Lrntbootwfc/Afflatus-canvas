@@ -1,0 +1,862 @@
+     1	import React, { useState, useEffect, useMemo } from 'react';
+     2	import {
+     3	  Search,
+     4	  SlidersHorizontal,
+     5	  Compass,
+     6	  Briefcase,
+     7	  Layers,
+     8	  Sparkles,
+     9	  Users,
+    10	  Film,
+    11	  Camera,
+    12	  Music,
+    13	  Scissors,
+    14	  Palette,
+    15	  ShieldCheck,
+    16	  RefreshCw,
+    17	  CheckCircle2,
+    18	} from 'lucide-react';
+    19	import type {
+    20	  ExploreFeedResponse,
+    21	  WorkShowcase,
+    22	  Project,
+    23	  ProjectTask,
+    24	  CreativeClub,
+    25	  ExploreCreatorItem,
+    26	  CreatorProfile,
+    27	} from '../../types';
+    28	import { WorkCard } from './WorkCard';
+    29	import { ProjectCard } from './ProjectCard';
+    30	import { TaskCard } from './TaskCard';
+    31	import { ClubCard } from './ClubCard';
+    32	import { CreatorCard } from './CreatorCard';
+    33	import { WorkDetailModal } from './WorkDetailModal';
+    34	import { ProjectDetailModal } from './ProjectDetailModal';
+    35	import { TaskDetailModal } from './TaskDetailModal';
+    36	import { ClubDetailModal } from './ClubDetailModal';
+    37	import { CreatorDetailModal } from './CreatorDetailModal';
+    38	import { GatedActionNoticeModal } from './GatedActionNoticeModal';
+    39	import { PublicProfileView } from './PublicProfileView';
+    40	import {
+    41	  fetchExploreFeedFromFirestore,
+    42	  createConnectionRequest,
+    43	} from '../../lib/firebase';
+    44	import { GlobalPostsFeed } from '../feed/GlobalPostsFeed';
+    45	
+    46	interface ExploreScreenProps {
+    47	  currentUser: CreatorProfile | null;
+    48	  onNavigateToOnboarding: () => void;
+    49	  onNavigateToAuth: () => void;
+    50	  onViewCreatorProfile: (creator: CreatorProfile) => void;
+    51	  onInitiateConnection: (creator: CreatorProfile, defaultMessage?: string) => void;
+    52	  initialTab?: TabType;
+    53	  initialCategory?: string;
+    54	  initialSearch?: string;
+    55	  initialEntity?: { type: 'project' | 'task' | 'creator' | 'club' | 'work'; id: string } | null;
+    56	}
+    57	
+    58	type TabType = 'all' | 'projects' | 'tasks' | 'works' | 'clubs' | 'creators';
+    59	
+    60	const CATEGORIES = [
+    61	  { id: 'all', label: 'All Crafts' },
+    62	  { id: 'cinematography', label: 'Cinematography' },
+    63	  { id: 'directing', label: 'Directing' },
+    64	  { id: 'production', label: 'Production' },
+    65	  { id: 'sound', label: 'Sound & Audio' },
+    66	  { id: 'editing', label: 'Editing & Color' },
+    67	  { id: 'design', label: 'Motion & Design' },
+    68	];
+    69	
+    70	export const ExploreScreen: React.FC<ExploreScreenProps> = ({
+    71	  currentUser,
+    72	  onNavigateToOnboarding,
+    73	  onNavigateToAuth,
+    74	  onViewCreatorProfile,
+    75	  onInitiateConnection,
+    76	  initialTab,
+    77	  initialCategory,
+    78	  initialSearch,
+    79	  initialEntity,
+    80	}) => {
+    81	  const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'creators');
+    82	  const [mainTab, setMainTab] = useState<'explore' | 'feed'>('explore');
+    83	  const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory || 'all');
+    84	  const [searchQuery, setSearchQuery] = useState<string>(initialSearch || '');
+    85	  const [feedData, setFeedData] = useState<ExploreFeedResponse | null>(null);
+    86	  const [loading, setLoading] = useState<boolean>(true);
+    87	  const [error, setError] = useState<string | null>(null);
+    88	
+    89	  // Selected modals
+    90	  const [selectedWork, setSelectedWork] = useState<WorkShowcase | null>(null);
+    91	  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+    92	  const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
+    93	  const [selectedClub, setSelectedClub] = useState<CreativeClub | null>(null);
+    94	  const [selectedCreator, setSelectedCreator] = useState<CreatorProfile | ExploreCreatorItem | null>(null);
+    95	
+    96	  // Public Profile View state (full screen / view state)
+    97	  const [viewingPublicProfileCreatorId, setViewingPublicProfileCreatorId] = useState<string | null>(null);
+    98	  const [viewingPublicProfileCreator, setViewingPublicProfileCreator] = useState<CreatorProfile | null>(null);
+    99	
+   100	  // Gated action modal
+   101	  const [gatedModalOpen, setGatedModalOpen] = useState(false);
+   102	  const [gatedActionTitle, setGatedActionTitle] = useState('Collaborate & Connect');
+   103	
+   104	  // Interactive feedback toast
+   105	  const [toastMessage, setToastMessage] = useState<string | null>(null);
+   106	
+   107	  const sendConnectionToBackend = async (
+   108	    recipientId: string,
+   109	    recipientName: string,
+   110	    message: string,
+   111	    projectId?: string,
+   112	    taskId?: string
+   113	  ) => {
+   114	    if (!currentUser?.id) {
+   115	      setToastMessage('Please sign in to send a connection request.');
+   116	      setTimeout(() => setToastMessage(null), 5000);
+   117	      return;
+   118	    }
+   119	    try {
+   120	      const { alreadyExists } = await createConnectionRequest({
+   121	        senderId: currentUser.id,
+   122	        recipientId,
+   123	        message,
+   124	        projectId,
+   125	        taskId,
+   126	      });
+   127	      if (alreadyExists) {
+   128	        setToastMessage(`You already sent a proposal to ${recipientName} for this opportunity.`);
+   129	      } else {
+   130	        setToastMessage(`Connection proposal successfully sent to ${recipientName}!`);
+   131	      }
+   132	      setTimeout(() => setToastMessage(null), 5000);
+   133	    } catch (err: any) {
+   134	      console.error('Failed to persist connection:', err);
+   135	      setToastMessage(err?.message || 'Network error submitting proposal.');
+   136	      setTimeout(() => setToastMessage(null), 5000);
+   137	    }
+   138	  };
+   139	
+   140	  // Load feed from Firestore (source of truth — no demo/seed mixing)
+   141	  const fetchFeed = async () => {
+   142	    setLoading(true);
+   143	    setError(null);
+   144	    try {
+   145	      const data = await fetchExploreFeedFromFirestore({
+   146	        userId: currentUser?.id,
+   147	        category: selectedCategory !== 'all' ? selectedCategory : undefined,
+   148	        search: searchQuery.trim() || undefined,
+   149	      });
+   150	      setFeedData(data);
+   151	    } catch (err) {
+   152	      console.error('[ExploreScreen] Error fetching feed from Firestore:', err);
+   153	      setError('Unable to load discovery feed. Please check your connection and try again.');
+   154	    } finally {
+   155	      setLoading(false);
+   156	    }
+   157	  };
+   158	
+   159	  useEffect(() => {
+   160	    fetchFeed();
+   161	  }, [selectedCategory, currentUser?.id]);
+   162	
+   163	  // Synchronize initial navigation from C1 Assistant or external routes
+   164	  useEffect(() => {
+   165	    if (initialTab) setActiveTab(initialTab);
+   166	    if (initialCategory) setSelectedCategory(initialCategory);
+   167	    if (initialSearch !== undefined) setSearchQuery(initialSearch);
+   168	  }, [initialTab, initialCategory, initialSearch]);
+   169	
+   170	  useEffect(() => {
+   171	    if (initialEntity && feedData) {
+   172	      if (initialEntity.type === 'task') {
+   173	        const found = feedData.tasks?.find((t) => t.id === initialEntity.id);
+   174	        if (found) setSelectedTask(found);
+   175	      } else if (initialEntity.type === 'project') {
+   176	        const found = feedData.projects?.find((p) => p.id === initialEntity.id);
+   177	        if (found) setSelectedProject(found);
+   178	      } else if (initialEntity.type === 'creator') {
+   179	        const found = feedData.suggestedCreators?.find((c) => c.id === initialEntity.id);
+   180	        if (found) setSelectedCreator(found);
+   181	      } else if (initialEntity.type === 'club') {
+   182	        const found = feedData.clubs?.find((c) => c.id === initialEntity.id);
+   183	        if (found) setSelectedClub(found);
+   184	      } else if (initialEntity.type === 'work') {
+   185	        const found = feedData.featuredWorks?.find((w) => w.id === initialEntity.id);
+   186	        if (found) setSelectedWork(found);
+   187	      }
+   188	    }
+   189	  }, [initialEntity, feedData]);
+   190	
+   191	  // Debounce search
+   192	  useEffect(() => {
+   193	    const timer = setTimeout(() => {
+   194	      fetchFeed();
+   195	    }, 300);
+   196	    return () => clearTimeout(timer);
+   197	  }, [searchQuery]);
+   198	
+   199	  // Check if current user profile is complete
+   200	  const isProfileComplete = useMemo(() => {
+   201	    if (!currentUser) return false;
+   202	    return !!currentUser.profileCompleted;
+   203	  }, [currentUser]);
+   204	
+   205	  // Gatekeeper for restricted actions
+   206	  const handleGatedAction = (actionTitle: string, callback: () => void) => {
+   207	    if (!currentUser) {
+   208	      setGatedActionTitle(actionTitle);
+   209	      setGatedModalOpen(true);
+   210	      return;
+   211	    }
+   212	    if (!isProfileComplete) {
+   213	      setGatedActionTitle(actionTitle);
+   214	      setGatedModalOpen(true);
+   215	      return;
+   216	    }
+   217	    callback();
+   218	  };
+   219	
+   220	  // View creator profile handler
+   221	  const handleViewCreator = (creator: CreatorProfile | ExploreCreatorItem) => {
+   222	    setViewingPublicProfileCreatorId(creator.id);
+   223	    setViewingPublicProfileCreator(creator as CreatorProfile);
+   224	    setSelectedWork(null);
+   225	    setSelectedProject(null);
+   226	    setSelectedTask(null);
+   227	    setSelectedClub(null);
+   228	    setSelectedCreator(null);
+   229	    if (onViewCreatorProfile) {
+   230	      onViewCreatorProfile(creator as CreatorProfile);
+   231	    }
+   232	  };
+   233	
+   234	  // Connection handler from creator card
+   235	  const handleConnectCreator = (creator: ExploreCreatorItem) => {
+   236	    handleGatedAction(`Connect with ${creator.name}`, async () => {
+   237	      const msg = `Hi ${creator.name}, I discovered your profile on Explore and would love to connect regarding upcoming productions.`;
+   238	      await sendConnectionToBackend(creator.id, creator.name, msg);
+   239	      onInitiateConnection(creator, msg);
+   240	    });
+   241	  };
+   242	
+   243	  // Project Lead connection handler
+   244	  const handleConnectProjectLead = (seeker: CreatorProfile, defaultMessage?: string) => {
+   245	    handleGatedAction(`Connect with ${seeker.name}`, async () => {
+   246	      const msg = defaultMessage || `Hi ${seeker.name}, I saw your project brief on Explore and would like to collaborate.`;
+   247	      await sendConnectionToBackend(seeker.id, seeker.name, msg, selectedProject?.id);
+   248	      onInitiateConnection(seeker, msg);
+   249	    });
+   250	  };
+   251	
+   252	  // Task application handler
+   253	  const handleApplyTask = (task: ProjectTask) => {
+   254	    handleGatedAction(`Apply for ${task.title}`, async () => {
+   255	      const recipientId = task.creatorId || task.creator?.id;
+   256	      const recipientName = task.creator?.name || 'the project lead';
+   257	      if (recipientId) {
+   258	        const msg = `Hi ${recipientName}, I would like to apply for the "${task.title}" position on "${task.projectTitle}". Let's discuss availability and rates.`;
+   259	        await sendConnectionToBackend(recipientId, recipientName, msg, task.projectId, task.id);
+   260	        setSelectedTask(null);
+   261	      }
+   262	    });
+   263	  };
+   264	  const isAllEmpty = useMemo(() => {
+   265	    if (!feedData) return false;
+   266	    return (
+   267	      feedData.projects.length === 0 &&
+   268	      feedData.tasks.length === 0 &&
+   269	      feedData.featuredWorks.length === 0 &&
+   270	      feedData.clubs.length === 0 &&
+   271	      feedData.suggestedCreators.length === 0
+   272	    );
+   273	  }, [feedData]);
+   274	
+   275	  if (viewingPublicProfileCreatorId) {
+   276	    return (
+   277	      <div className="w-full min-h-screen py-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-8 animate-in fade-in duration-200">
+   278	        <PublicProfileView
+   279	          creatorId={viewingPublicProfileCreatorId}
+   280	          initialCreator={viewingPublicProfileCreator}
+   281	          currentUser={currentUser}
+   282	          onBack={() => {
+   283	            setViewingPublicProfileCreatorId(null);
+   284	            setViewingPublicProfileCreator(null);
+   285	          }}
+   286	          onViewWorkDetail={(work) => setSelectedWork(work)}
+   287	          onViewProjectDetail={(project) => setSelectedProject(project)}
+   288	          isProfileComplete={isProfileComplete}
+   289	          onOpenGatedNotice={(action) => {
+   290	            setGatedActionTitle(action);
+   291	            setGatedModalOpen(true);
+   292	          }}
+   293	        />
+   294	
+   295	        {/* Modals from Public Profile */}
+   296	        <WorkDetailModal
+   297	          work={selectedWork}
+   298	          onClose={() => setSelectedWork(null)}
+   299	          onViewCreator={handleViewCreator}
+   300	          onSelectProject={(proj) => {
+   301	            setSelectedWork(null);
+   302	            setSelectedProject(proj);
+   303	          }}
+   304	        />
+   305	
+   306	        <ProjectDetailModal
+   307	          project={selectedProject}
+   308	          onClose={() => setSelectedProject(null)}
+   309	          currentUser={currentUser}
+   310	          onViewCreator={handleViewCreator}
+   311	          onConnectWithLead={handleConnectProjectLead}
+   312	          onSelectTask={(task) => {
+   313	            setSelectedProject(null);
+   314	            setSelectedTask(task);
+   315	          }}
+   316	        />
+   317	
+   318	        <GatedActionNoticeModal
+   319	          isOpen={gatedModalOpen}
+   320	          onClose={() => setGatedModalOpen(false)}
+   321	          onCompleteProfile={onNavigateToOnboarding}
+   322	          onLogin={onNavigateToAuth}
+   323	          actionTitle={gatedActionTitle}
+   324	        />
+   325	      </div>
+   326	    );
+   327	  }
+   328	
+   329	
+   330	  const renderEmptyState = (entityTitle: string) => (
+   331	    <div className="card-warm-white p-10 sm:p-14 rounded-3xl border border-[var(--card-border)] text-center space-y-4 my-4">
+   332	      <div className="w-12 h-12 rounded-full bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] flex items-center justify-center mx-auto text-[var(--accent-amber)]">
+   333	        <Search className="w-5 h-5" />
+   334	      </div>
+   335	      <div className="space-y-1">
+   336	        <h3 className="font-editorial text-lg font-bold text-[var(--text-primary)]">
+   337	          No {entityTitle} Found
+   338	        </h3>
+   339	        <p className="text-xs text-[var(--text-secondary)] max-w-md mx-auto leading-relaxed">
+   340	          {searchQuery
+   341	            ? `No matching records found for "${searchQuery}"${selectedCategory !== 'all' ? ` in ${selectedCategory}` : ''}. Try broadening your search or resetting filters.`
+   342	            : `No ${entityTitle.toLowerCase()} currently available${selectedCategory !== 'all' ? ` in the ${selectedCategory} category` : ''}.`}
+   343	        </p>
+   344	      </div>
+   345	      {(searchQuery || selectedCategory !== 'all') && (
+   346	        <div className="pt-2 flex items-center justify-center">
+   347	          <button
+   348	            onClick={() => {
+   349	              setSearchQuery('');
+   350	              setSelectedCategory('all');
+   351	            }}
+   352	            className="px-5 py-2.5 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-md inline-flex items-center gap-1.5 cursor-pointer"
+   353	          >
+   354	            <RefreshCw className="w-3.5 h-3.5" />
+   355	            <span>Reset Search &amp; Filters</span>
+   356	          </button>
+   357	        </div>
+   358	      )}
+   359	    </div>
+   360	  );
+   361	
+   362	  return (
+   363	    <div className="w-full min-h-screen py-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-10 animate-in fade-in duration-200">
+   364	      {/* 1. Editorial Header Banner with Discovery Radar */}
+   365	      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-6 border-b border-[var(--card-border)]">
+   366	        <div className="space-y-2">
+   367	          <div className="flex items-center gap-2">
+   368	            <span className="w-2 h-2 rounded-full bg-[var(--accent-amber)] animate-pulse" />
+   369	            <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-[var(--accent-amber)]">
+   370	              Production Registry &amp; Creative Discovery
+   371	            </span>
+   372	          </div>
+   373	
+   374	          <h1 className="font-editorial text-3xl sm:text-4xl lg:text-5xl font-bold text-[var(--text-primary)] tracking-tight">
+   375	            Explore Work &amp; Craft
+   376	          </h1>
+   377	
+   378	          <p className="text-xs sm:text-sm text-[var(--text-secondary)] max-w-2xl leading-relaxed">
+   379	            Discover active film campaigns, production briefs, open crew opportunities, creative
+   380	            guilds, and verified talent across Indian cinema and digital media.
+   381	          </p>
+   382	        </div>
+   383	
+   384	        {/* User Stats Counter Bar */}
+   385	        {currentUser && (
+   386	          <div className="flex items-center gap-2 p-2 rounded-2xl bg-[var(--card-inner-bg)]/80 border border-[var(--card-border)] text-xs shrink-0 flex-wrap">
+   387	            <div className="px-3 py-1.5 rounded-xl bg-[var(--card-bg)] border border-[var(--card-border)] flex items-center gap-2">
+   388	              <span className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">My Collaborations</span>
+   389	              <span className="font-mono font-bold text-sm text-[var(--accent-amber)]">{currentUser.collaborationCount || 0}</span>
+   390	            </div>
+   391	          </div>
+   392	        )}
+   393	
+   394	        {/* Profile Status Banner for Incomplete users */}
+   395	        {currentUser && !isProfileComplete && (
+   396	          <div className="p-3.5 rounded-2xl bg-[var(--card-inner-bg)] border border-[var(--accent-amber)]/30 flex items-center gap-3 shrink-0">
+   397	            <ShieldCheck className="w-5 h-5 text-[var(--accent-amber)] shrink-0" />
+   398	            <div>
+   399	              <p className="text-xs font-bold text-[var(--text-primary)]">Explorer Mode Active</p>
+   400	              <p className="text-[11px] text-[var(--text-secondary)]">
+   401	                Browse freely. Complete profile anytime to submit proposals.
+   402	              </p>
+   403	            </div>
+   404	            <button
+   405	              onClick={onNavigateToOnboarding}
+   406	              className="amber-pill-btn px-3 py-1.5 rounded-full text-[11px] font-bold shrink-0 cursor-pointer"
+   407	            >
+   408	              Complete
+   409	            </button>
+   410	          </div>
+   411	        )}
+   412	      {/* 2. Main Navigation Tabs */}
+   413	      <div className="flex items-center space-x-2 border-b border-[var(--card-border)] pb-4 mb-6">
+   414	        <button
+   415	          onClick={() => setMainTab('explore')}
+   416	          className={`px-4 py-2 text-sm font-bold rounded-full transition-colors ${
+   417	            mainTab === 'explore'
+   418	              ? 'bg-[var(--text-primary)] text-[var(--card-bg)]'
+   419	              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+   420	          }`}
+   421	        >
+   422	          Explore Creators
+   423	        </button>
+   424	        <button
+   425	          onClick={() => setMainTab('feed')}
+   426	          className={`px-4 py-2 text-sm font-bold rounded-full transition-colors ${
+   427	            mainTab === 'feed'
+   428	              ? 'bg-[var(--text-primary)] text-[var(--card-bg)]'
+   429	              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+   430	          }`}
+   431	        >
+   432	          Explore Projects
+   433	        </button>
+   434	      </div>
+   435	
+   436	      {/* 3. Search Toolbar (only for 'explore' tab) */}
+   437	      {mainTab === 'explore' && (
+   438	      <>
+   439	        <div className="space-y-4">
+   440	          <div className="flex flex-col sm:flex-row items-center gap-3">
+   441	          {/* Search Input */}
+   442	          <div className="relative w-full sm:flex-1">
+   443	            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
+   444	            <input
+   445	              id="explore-search-input"
+   446	              type="text"
+   447	              value={searchQuery}
+   448	              onChange={(e) => setSearchQuery(e.target.value)}
+   449	              placeholder="Search briefs, roles, camera gear, film styles, skills, or creators..."
+   450	              className="w-full pl-11 pr-4 py-3 rounded-2xl bg-[var(--card-bg)] border border-[var(--card-border)] text-xs sm:text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-amber)] transition-all shadow-sm"
+   451	            />
+   452	          </div>
+   453	
+   454	          <button
+   455	            onClick={fetchFeed}
+   456	            disabled={loading}
+   457	            className="p-3 rounded-2xl bg-[var(--card-bg)] border border-[var(--card-border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-amber)] transition-all shrink-0 cursor-pointer shadow-sm"
+   458	            title="Refresh Feed"
+   459	          >
+   460	            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+   461	          </button>
+   462	        </div>
+   463	      </div>
+   464	
+   465	      {/* 4. Content Grid or Loading State */}
+   466	      {loading ? (
+   467	        <div className="py-20 flex flex-col items-center justify-center space-y-3">
+   468	          <div className="w-8 h-8 rounded-full border-2 border-[var(--accent-amber)] border-t-transparent animate-spin" />
+   469	          <p className="text-xs text-[var(--text-muted)] font-mono">Curating discovery feed...</p>
+   470	        </div>
+   471	      ) : error ? (
+   472	        <div className="p-8 rounded-3xl bg-[var(--card-bg)] border border-[var(--card-border)] text-center space-y-3">
+   473	          <p className="text-sm font-bold text-[var(--text-primary)]">{error}</p>
+   474	          <button
+   475	            onClick={fetchFeed}
+   476	            className="amber-pill-btn px-4 py-2 rounded-full text-xs font-bold cursor-pointer"
+   477	          >
+   478	            Retry Loading
+   479	          </button>
+   480	        </div>
+   481	      ) : (
+   482	        <div className="space-y-12">
+   483	          {/* ALL VIEW SECTIONS */}
+   484	          {activeTab === 'all' && feedData && (
+   485	            <>
+   486	              {isAllEmpty && renderEmptyState('Opportunities or Creative Works')}
+   487	
+   488	              {/* Section 1: Active Projects */}
+   489	              {feedData.projects.length > 0 && (
+   490	                <section className="space-y-4">
+   491	                  <div className="flex items-center justify-between">
+   492	                    <div>
+   493	                      <h2 className="font-editorial text-xl font-bold text-[var(--text-primary)]">
+   494	                        Production Briefs &amp; Projects
+   495	                      </h2>
+   496	                      <p className="text-xs text-[var(--text-muted)]">
+   497	                        Campaigns actively assembling crew and gear packages
+   498	                      </p>
+   499	                    </div>
+   500	                    <button
+   501	                      onClick={() => setActiveTab('projects')}
+   502	                      className="text-xs font-semibold text-[var(--accent-amber)] hover:underline cursor-pointer"
+   503	                    >
+   504	                      View All ({feedData.projects.length})
+   505	                    </button>
+   506	                  </div>
+   507	
+   508	                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+   509	                    {feedData.projects.slice(0, 3).map((project) => (
+   510	                      <ProjectCard
+   511	                        key={project.id}
+   512	                        project={project}
+   513	                        onOpenDetail={setSelectedProject}
+   514	                        onViewCreator={handleViewCreator}
+   515	                      />
+   516	                    ))}
+   517	                  </div>
+   518	                </section>
+   519	              )}
+   520	
+   521	              {/* Section 2: Open Roles / Tasks */}
+   522	              {feedData.tasks.length > 0 && (
+   523	                <section className="space-y-4">
+   524	                  <div className="flex items-center justify-between">
+   525	                    <div>
+   526	                      <div className="flex items-center gap-1.5 mb-1">
+   527	                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+   528	                        <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-500">Live Production Calls</span>
+   529	                      </div>
+   530	                      <h2 className="font-editorial text-2xl font-bold text-[var(--text-primary)]">
+   531	                        Open Crew Callouts &amp; Roles
+   532	                      </h2>
+   533	                      <p className="text-xs text-[var(--text-muted)]">
+   534	                        Targeted crew positions with transparent day rates and verified production escrows
+   535	                      </p>
+   536	                    </div>
+   537	                    <button
+   538	                      onClick={() => setActiveTab('tasks')}
+   539	                      className="text-xs font-mono font-bold text-[var(--accent-amber)] hover:underline cursor-pointer"
+   540	                    >
+   541	                      View All ({feedData.tasks.length}) &rarr;
+   542	                    </button>
+   543	                  </div>
+   544	
+   545	                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+   546	                    {feedData.tasks.slice(0, 4).map((task) => (
+   547	                      <TaskCard
+   548	                        key={task.id}
+   549	                        task={task}
+   550	                        onOpenDetail={setSelectedTask}
+   551	                        onViewCreator={handleViewCreator}
+   552	                        onApplyOrConnect={handleApplyTask}
+   553	                      />
+   554	                    ))}
+   555	                  </div>
+   556	                </section>
+   557	              )}
+   558	
+   559	              {/* Section 3: Work Showcases (Work -> People Discovery) */}
+   560	              {feedData.featuredWorks.length > 0 && (
+   561	                <section className="space-y-4">
+   562	                  <div className="flex items-center justify-between">
+   563	                    <div>
+   564	                      <h2 className="font-editorial text-xl font-bold text-[var(--text-primary)]">
+   565	                        Featured Works &amp; Case Studies
+   566	                      </h2>
+   567	                      <p className="text-xs text-[var(--text-muted)]">
+   568	                        Explore finished cinematography, audio reels, and directorial cuts
+   569	                      </p>
+   570	                    </div>
+   571	                    <button
+   572	                      onClick={() => setActiveTab('works')}
+   573	                      className="text-xs font-semibold text-[var(--accent-amber)] hover:underline cursor-pointer"
+   574	                    >
+   575	                      View All ({feedData.featuredWorks.length})
+   576	                    </button>
+   577	                  </div>
+   578	
+   579	                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+   580	                    {feedData.featuredWorks.slice(0, 3).map((work) => (
+   581	                      <WorkCard
+   582	                        key={work.id}
+   583	                        work={work}
+   584	                        onOpenDetail={setSelectedWork}
+   585	                        onViewCreator={handleViewCreator}
+   586	                      />
+   587	                    ))}
+   588	                  </div>
+   589	                </section>
+   590	              )}
+   591	
+   592	              {/* Section 4: Creative Guilds / Clubs */}
+   593	              {feedData.clubs.length > 0 && (
+   594	                <section className="space-y-4">
+   595	                  <div className="flex items-center justify-between">
+   596	                    <div>
+   597	                      <h2 className="font-editorial text-xl font-bold text-[var(--text-primary)]">
+   598	                        Creative Guilds &amp; Collectives
+   599	                      </h2>
+   600	                      <p className="text-xs text-[var(--text-muted)]">
+   601	                        Specialized discipline communities sharing knowledge and gear
+   602	                      </p>
+   603	                    </div>
+   604	                    <button
+   605	                      onClick={() => setActiveTab('clubs')}
+   606	                      className="text-xs font-semibold text-[var(--accent-amber)] hover:underline cursor-pointer"
+   607	                    >
+   608	                      View All ({feedData.clubs.length})
+   609	                    </button>
+   610	                  </div>
+   611	
+   612	                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+   613	                    {feedData.clubs.slice(0, 3).map((club) => (
+   614	                      <ClubCard
+   615	                        key={club.id}
+   616	                        club={club}
+   617	                        onOpenDetail={setSelectedClub}
+   618	                        onViewCreator={handleViewCreator}
+   619	                      />
+   620	                    ))}
+   621	                  </div>
+   622	                </section>
+   623	              )}
+   624	
+   625	              {/* Section 5: Suggested Talent with Deterministic Scoring */}
+   626	              {feedData.suggestedCreators.length > 0 && (
+   627	                <section className="space-y-4">
+   628	                  <div className="flex items-center justify-between">
+   629	                    <div>
+   630	                      <h2 className="font-editorial text-xl font-bold text-[var(--text-primary)]">
+   631	                        Collaborators &amp; Craft Masters
+   632	                      </h2>
+   633	                      <p className="text-xs text-[var(--text-muted)]">
+   634	                        Ranked by craft complementarity, seeking preferences, and location
+   635	                      </p>
+   636	                    </div>
+   637	                    <button
+   638	                      onClick={() => setActiveTab('creators')}
+   639	                      className="text-xs font-semibold text-[var(--accent-amber)] hover:underline cursor-pointer"
+   640	                    >
+   641	                      View All ({feedData.suggestedCreators.length})
+   642	                    </button>
+   643	                  </div>
+   644	
+   645	                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+   646	                    {feedData.suggestedCreators.slice(0, 3).map((creator) => (
+   647	                      <CreatorCard
+   648	                        key={creator.id}
+   649	                        creator={creator}
+   650	                        onOpenDetail={handleViewCreator}
+   651	                        onConnect={handleConnectCreator}
+   652	                      />
+   653	                    ))}
+   654	                  </div>
+   655	                </section>
+   656	              )}
+   657	            </>
+   658	          )}
+   659	
+   660	          {/* TAB: PROJECTS ONLY */}
+   661	          {activeTab === 'projects' && feedData && (
+   662	            feedData.projects.length === 0 ? (
+   663	              renderEmptyState('Projects')
+   664	            ) : (
+   665	              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+   666	                {feedData.projects.map((project) => (
+   667	                  <ProjectCard
+   668	                    key={project.id}
+   669	                    project={project}
+   670	                    onOpenDetail={setSelectedProject}
+   671	                    onViewCreator={handleViewCreator}
+   672	                  />
+   673	                ))}
+   674	              </div>
+   675	            )
+   676	          )}
+   677	
+   678	          {/* TAB: TASKS ONLY */}
+   679	          {activeTab === 'tasks' && feedData && (
+   680	            feedData.tasks.length === 0 ? (
+   681	              renderEmptyState('Opportunities')
+   682	            ) : (
+   683	              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+   684	                {feedData.tasks.map((task) => (
+   685	                  <TaskCard
+   686	                    key={task.id}
+   687	                    task={task}
+   688	                    onOpenDetail={setSelectedTask}
+   689	                    onViewCreator={handleViewCreator}
+   690	                    onApplyOrConnect={handleApplyTask}
+   691	                  />
+   692	                ))}
+   693	              </div>
+   694	            )
+   695	          )}
+   696	
+   697	          {/* TAB: WORKS ONLY */}
+   698	          {activeTab === 'works' && feedData && (
+   699	            feedData.featuredWorks.length === 0 ? (
+   700	              renderEmptyState('Work Showcases')
+   701	            ) : (
+   702	              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+   703	                {feedData.featuredWorks.map((work) => (
+   704	                  <WorkCard
+   705	                    key={work.id}
+   706	                    work={work}
+   707	                    onOpenDetail={setSelectedWork}
+   708	                    onViewCreator={handleViewCreator}
+   709	                  />
+   710	                ))}
+   711	              </div>
+   712	            )
+   713	          )}
+   714	
+   715	          {/* TAB: CLUBS ONLY */}
+   716	          {activeTab === 'clubs' && feedData && (
+   717	            feedData.clubs.length === 0 ? (
+   718	              renderEmptyState('Guilds & Clubs')
+   719	            ) : (
+   720	              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+   721	                {feedData.clubs.map((club) => (
+   722	                  <ClubCard
+   723	                    key={club.id}
+   724	                    club={club}
+   725	                    onOpenDetail={setSelectedClub}
+   726	                    onViewCreator={handleViewCreator}
+   727	                  />
+   728	                ))}
+   729	              </div>
+   730	            )
+   731	          )}
+   732	
+   733	          {/* TAB: CREATORS ONLY */}
+   734	          {activeTab === 'creators' && feedData && (
+   735	            feedData.suggestedCreators.length === 0 ? (
+   736	              renderEmptyState('Collaborators')
+   737	            ) : (
+   738	              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+   739	                {feedData.suggestedCreators.map((creator) => (
+   740	                  <CreatorCard
+   741	                    key={creator.id}
+   742	                    creator={creator}
+   743	                    onOpenDetail={handleViewCreator}
+   744	                    onConnect={handleConnectCreator}
+   745	                  />
+   746	                ))}
+   747	              </div>
+   748	            )
+   749	          )}
+   750	        </div>
+   751	      )}
+   752	      </>
+   753	      )}
+   754	
+   755	      {/* Global Posts Feed */}
+   756	      {mainTab === 'feed' && (
+   757	        <GlobalPostsFeed currentUser={currentUser} />
+   758	      )}
+   759	
+   760	      {/* 5. Detail Modals */}
+   761	      <WorkDetailModal
+   762	        work={selectedWork}
+   763	        onClose={() => setSelectedWork(null)}
+   764	        onViewCreator={handleViewCreator}
+   765	        onSelectProject={(proj) => {
+   766	          setSelectedWork(null);
+   767	          setSelectedProject(proj);
+   768	        }}
+   769	        onSelectTask={(task) => {
+   770	          setSelectedWork(null);
+   771	          setSelectedTask(task);
+   772	        }}
+   773	        onSelectClub={(club) => {
+   774	          setSelectedWork(null);
+   775	          setSelectedClub(club);
+   776	        }}
+   777	      />
+   778	
+   779	      <ProjectDetailModal
+   780	        project={selectedProject}
+   781	        onClose={() => setSelectedProject(null)}
+   782	        currentUser={currentUser}
+   783	        onViewCreator={handleViewCreator}
+   784	        onConnectWithLead={handleConnectProjectLead}
+   785	        onSelectTask={(task) => {
+   786	          setSelectedProject(null);
+   787	          setSelectedTask(task);
+   788	        }}
+   789	        onSelectClub={(club) => {
+   790	          setSelectedProject(null);
+   791	          setSelectedClub(club);
+   792	        }}
+   793	      />
+   794	
+   795	      <TaskDetailModal
+   796	        task={selectedTask}
+   797	        onClose={() => setSelectedTask(null)}
+   798	        currentUser={currentUser}
+   799	        onViewCreator={handleViewCreator}
+   800	        onApplyOrConnect={handleApplyTask}
+   801	        onSelectProject={(proj) => {
+   802	          setSelectedTask(null);
+   803	          setSelectedProject(proj);
+   804	        }}
+   805	      />
+   806	
+   807	      <ClubDetailModal
+   808	        club={selectedClub}
+   809	        onClose={() => setSelectedClub(null)}
+   810	        currentUser={currentUser}
+   811	        onViewCreator={handleViewCreator}
+   812	        onSelectProject={(proj) => {
+   813	          setSelectedClub(null);
+   814	          setSelectedProject(proj);
+   815	        }}
+   816	        onSelectTask={(task) => {
+   817	          setSelectedClub(null);
+   818	          setSelectedTask(task);
+   819	        }}
+   820	      />
+   821	
+   822	      {/* Creator Detail Profile Modal */}
+   823	      <CreatorDetailModal
+   824	        creator={selectedCreator}
+   825	        onClose={() => setSelectedCreator(null)}
+   826	        currentUser={currentUser}
+   827	        onConnect={(creator) => {
+   828	          setSelectedCreator(null);
+   829	          handleConnectCreator(creator as ExploreCreatorItem);
+   830	        }}
+   831	      />
+   832	
+   833	      {/* 6. Gated Action Notification Modal */}
+   834	      <GatedActionNoticeModal
+   835	        isOpen={gatedModalOpen}
+   836	        onClose={() => setGatedModalOpen(false)}
+   837	        onCompleteProfile={currentUser ? onNavigateToOnboarding : onNavigateToAuth}
+   838	        actionTitle={gatedActionTitle}
+   839	        isLoggedIn={!!currentUser}
+   840	      />
+   841	
+   842	      {/* 7. Connection Confirmation Toast */}
+   843	      {toastMessage && (
+   844	        <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-200">
+   845	          <div className="card-warm-white p-4 rounded-2xl shadow-2xl border border-[var(--accent-amber)]/40 flex items-center gap-3 bg-[var(--card-bg)]">
+   846	            <div className="w-8 h-8 rounded-full bg-[var(--accent-amber)]/15 text-[var(--accent-amber)] flex items-center justify-center shrink-0">
+   847	              <CheckCircle2 className="w-5 h-5" />
+   848	            </div>
+   849	            <div>
+   850	              <p className="text-xs font-bold text-[var(--text-primary)]">
+   851	                {/error|failed|must be signed|sign in|Network/i.test(toastMessage || '')
+   852	                  ? 'Could not send proposal'
+   853	                  : 'Collaboration Proposal Sent'}
+   854	              </p>
+   855	              <p className="text-[11px] text-[var(--text-secondary)]">{toastMessage}</p>
+   856	            </div>
+   857	          </div>
+   858	        </div>
+   859	      )}
+   860	    </div>
+   861	  );
+   862	};

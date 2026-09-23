@@ -25,7 +25,7 @@ import {
   IndianRupee,
   Image as ImageIcon,
 } from 'lucide-react';
-import type { CreatorProfile, WorkLink, SocialLinks } from '../types';
+import type { CreatorProfile, WorkLink, SocialLinks, PortfolioItem } from '../types';
 import { UserAvatar } from './UserAvatar';
 import { ImagePickerModal } from './ImagePickerModal';
 import {
@@ -36,6 +36,7 @@ import {
   validateSocialUrl,
 } from '../constants/roles';
 import { updateProfileInFirestore } from '../lib/firebase';
+import { affilApi } from '../lib/affilApi';
 
 interface ProfileSetupScreenProps {
   initialProfile: CreatorProfile;
@@ -56,20 +57,18 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
   const [coverImageUrl, setCoverImageUrl] = useState(initialProfile.coverImageUrl || '');
   const [primaryRole, setPrimaryRole] = useState(initialProfile.primaryRole || '');
   const [location, setLocation] = useState(initialProfile.location || '');
-  const [dayRate, setDayRate] = useState(
-    initialProfile.dayRateUsd && initialProfile.dayRateUsd > 0 ? initialProfile.dayRateUsd : 0
-  );
-  const [hourlyRate, setHourlyRate] = useState(
-    initialProfile.hourlyRateUsd && initialProfile.hourlyRateUsd > 0 ? initialProfile.hourlyRateUsd : 0
-  );
   const [bio, setBio] = useState(initialProfile.bio || '');
+  const [yearsActive, setYearsActive] = useState(initialProfile.experience?.yearsActive || 0);
+  const [projectsCompleted, setProjectsCompleted] = useState(initialProfile.experience?.projectsCompleted || 0);
+  const [roleSpecificProjects, setRoleSpecificProjects] = useState(initialProfile.experience?.roleSpecificProjects || 0);
+  
+  const [portfolios, setPortfolios] = useState<PortfolioItem[]>(initialProfile.portfolios || []);
 
-  // "Who are you seeking for?" — empty until user selects
-  const [seekingRoles, setSeekingRoles] = useState<string[]>(
-    initialProfile.seekingRoles && initialProfile.seekingRoles.length > 0
-      ? initialProfile.seekingRoles
-      : []
-  );
+  const [scenarioQ1, setScenarioQ1] = useState('');
+  const [scenarioQ2, setScenarioQ2] = useState('');
+  const [scenarioQ3, setScenarioQ3] = useState('');
+  const [scenarioQ4, setScenarioQ4] = useState('');
+  const [scenarioQ5, setScenarioQ5] = useState('');
 
   // Work links — empty until user adds (no demo YouTube/Behance)
   const [workLinks, setWorkLinks] = useState<WorkLink[]>(
@@ -99,10 +98,11 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
     setCoverImageUrl(initialProfile.coverImageUrl || '');
     setPrimaryRole(initialProfile.primaryRole || '');
     setLocation(initialProfile.location || '');
-    setDayRate(initialProfile.dayRateUsd && initialProfile.dayRateUsd > 0 ? initialProfile.dayRateUsd : 0);
-    setHourlyRate(initialProfile.hourlyRateUsd && initialProfile.hourlyRateUsd > 0 ? initialProfile.hourlyRateUsd : 0);
     setBio(initialProfile.bio || '');
-    setSeekingRoles(initialProfile.seekingRoles?.length ? initialProfile.seekingRoles : []);
+    setYearsActive(initialProfile.experience?.yearsActive || 0);
+    setProjectsCompleted(initialProfile.experience?.projectsCompleted || 0);
+    setRoleSpecificProjects(initialProfile.experience?.roleSpecificProjects || 0);
+    setPortfolios(initialProfile.portfolios || []);
     setWorkLinks(initialProfile.workLinks?.length ? initialProfile.workLinks : []);
     setSocialLinks(initialProfile.socialLinks || {
       linkedin: '',
@@ -125,15 +125,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
   const [avatarPickerTab, setAvatarPickerTab] = useState<'gallery' | 'camera' | 'url'>('gallery');
   const [isCoverPickerOpen, setIsCoverPickerOpen] = useState(false);
   const [coverPickerTab, setCoverPickerTab] = useState<'gallery' | 'camera' | 'url'>('gallery');
-
-  // Toggle Seeking Role
-  const toggleSeekingRole = (role: string) => {
-    if (seekingRoles.includes(role)) {
-      setSeekingRoles(seekingRoles.filter((r) => r !== role));
-    } else {
-      setSeekingRoles([...seekingRoles, role]);
-    }
-  };
+  const [isPortfolioPickerOpen, setIsPortfolioPickerOpen] = useState(false);
 
   // Add Work Link
   const addWorkLink = () => {
@@ -251,25 +243,45 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
 
     setIsSaving(true);
 
-    const updatedProfile: CreatorProfile = {
-      ...initialProfile,
-      username: username.toLowerCase().replace(/[^a-z0-9_]/g, ''),
-      name: fullName.trim(),
-      email: email.trim(),
-      primaryRole,
-      location: locCheck.normalized,
-      dayRateUsd: Number(dayRate) || 0,
-      hourlyRateUsd: Number(hourlyRate) || 0,
-      bio,
-      seekingRoles,
-      workLinks: workLinks.filter((wl) => wl.url.trim() && wl.url !== 'https://'),
-      socialLinks: formattedSocials,
-      avatarUrl: avatarUrl.trim(),
-      coverImageUrl: coverImageUrl.trim(),
-      profileCompleted: true,
-    };
-
     try {
+      let collaborationProfile = initialProfile.collaborationProfile;
+      
+      if (!initialProfile.profileCompleted) {
+        // Analyze collaboration scenarios using Gemini only during initial setup
+        const answers = {
+          scenario_q1: scenarioQ1,
+          scenario_q2: scenarioQ2,
+          scenario_q3: scenarioQ3,
+          scenario_q4: scenarioQ4,
+          scenario_q5: scenarioQ5,
+        };
+        
+        const analysisResponse = await affilApi.analyzeCollaborationProfile(answers);
+        collaborationProfile = analysisResponse.collaborationProfile;
+      }
+
+      const updatedProfile: CreatorProfile = {
+        ...initialProfile,
+        username: username.toLowerCase().replace(/[^a-z0-9_]/g, ''),
+        name: fullName.trim(),
+        email: email.trim(),
+        primaryRole,
+        location: locCheck.normalized,
+        bio,
+        experience: {
+          yearsActive: Number(yearsActive) || 0,
+          projectsCompleted: Number(projectsCompleted) || 0,
+          roleSpecificProjects: Number(roleSpecificProjects) || 0,
+        },
+        collaborationProfile,
+        workLinks: workLinks.filter((wl) => wl.url.trim() && wl.url !== 'https://'),
+        socialLinks: formattedSocials,
+        avatarUrl: avatarUrl.trim(),
+        coverImageUrl: coverImageUrl.trim(),
+        portfolios,
+        profileCompleted: true,
+      };
+
       // Persist to Firestore (source of truth for user/profile data)
       const saved = await updateProfileInFirestore(updatedProfile);
       onProfileSaved(saved);
@@ -292,7 +304,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
           {initialProfile.profileCompleted ? 'Edit Your Creator Profile' : 'Complete Your Creator Profile'}
         </h1>
         <p className="text-xs sm:text-sm text-[var(--text-secondary)]">
-          Set up your primary role, base location, day rates in Rupees (₹), work reels, social links, and collaborator roles to personalize your feed.
+          Set up your primary role, base location, work reels, social links, and collaborator roles to personalize your feed.
         </p>
       </div>
 
@@ -430,9 +442,6 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
               </div>
 
               <div className="sm:self-end flex items-center gap-2">
-                <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-[var(--accent-amber)]/10 text-[var(--accent-amber)] border border-[var(--accent-amber)]/30">
-                  ₹{Number(dayRate).toLocaleString('en-IN')}/day
-                </span>
                 <span className="px-2.5 py-1 rounded-full text-[10px] font-medium bg-[var(--tag-bg)] text-[var(--text-secondary)] border border-[var(--tag-border)]">
                   Live Preview
                 </span>
@@ -577,95 +586,139 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
               )}
             </div>
 
-            {/* Rates in Rupees (INR ₹) */}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
-                  Day Rate (₹)
+            {/* Factual Experience */}
+            <div className="col-span-1 sm:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-[var(--card-border)]">
+              <div className="col-span-1 sm:col-span-3">
+                <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">
+                  Factual Experience
                 </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-2.5 text-xs text-[var(--accent-amber)] font-bold font-mono">₹</span>
-                  <input
-                    id="profile-dayrate-input"
-                    type="number"
-                    value={dayRate}
-                    onChange={(e) => setDayRate(Number(e.target.value))}
-                    placeholder="e.g. 25000"
-                    className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-7 pr-2 py-2.5 text-xs font-mono text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
-                  />
-                </div>
               </div>
+              
               <div>
                 <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
-                  Hourly Rate (₹)
+                  Years Active
                 </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-2.5 text-xs text-[var(--accent-amber)] font-bold font-mono">₹</span>
-                  <input
-                    id="profile-hourlyrate-input"
-                    type="number"
-                    value={hourlyRate}
-                    onChange={(e) => setHourlyRate(Number(e.target.value))}
-                    placeholder="4500"
-                    className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-7 pr-2 py-2.5 text-xs font-mono text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
-                  />
-                </div>
+                <input
+                  type="number"
+                  min="0"
+                  value={yearsActive}
+                  onChange={(e) => setYearsActive(Number(e.target.value))}
+                  placeholder="e.g. 5"
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
+                  Projects Completed
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={projectsCompleted}
+                  onChange={(e) => setProjectsCompleted(Number(e.target.value))}
+                  placeholder="e.g. 20"
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
+                  Role Specific Projects
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={roleSpecificProjects}
+                  onChange={(e) => setRoleSpecificProjects(Number(e.target.value))}
+                  placeholder="e.g. 15"
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
+                />
               </div>
             </div>
+
+            {/* Collaboration Scenarios */}
+            {!initialProfile.profileCompleted && (
+            <div className="col-span-1 sm:col-span-2 space-y-4 pt-4 border-t border-[var(--card-border)]">
+              <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider">
+                Collaboration Scenarios
+              </label>
+              
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
+                  1. You strongly disagree with the creative direction chosen by someone leading your project. What would you do?
+                </label>
+                <textarea
+                  value={scenarioQ1}
+                  onChange={(e) => setScenarioQ1(e.target.value)}
+                  rows={2}
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] resize-none"
+                  placeholder="Share your approach..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
+                  2. Someone gives you critical feedback about your work. How do you usually respond?
+                </label>
+                <textarea
+                  value={scenarioQ2}
+                  onChange={(e) => setScenarioQ2(e.target.value)}
+                  rows={2}
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] resize-none"
+                  placeholder="Share your approach..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
+                  3. Your team is behind schedule and your task is taking longer than expected. What would you do?
+                </label>
+                <textarea
+                  value={scenarioQ3}
+                  onChange={(e) => setScenarioQ3(e.target.value)}
+                  rows={2}
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] resize-none"
+                  placeholder="Share your approach..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
+                  4. Which collaboration style describes you best?
+                </label>
+                <select
+                  value={scenarioQ4}
+                  onChange={(e) => setScenarioQ4(e.target.value)}
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
+                >
+                  <option value="" disabled>Select an option...</option>
+                  <option value="Prefer clear direction and execute it">Prefer clear direction and execute it</option>
+                  <option value="Discuss ideas and shape the direction together">Discuss ideas and shape the direction together</option>
+                  <option value="Prefer taking ownership and proposing my own direction">Prefer taking ownership and proposing my own direction</option>
+                  <option value="Depends on the project">Depends on the project</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
+                  5. What qualities do you value most in someone you collaborate with?
+                </label>
+                <textarea
+                  value={scenarioQ5}
+                  onChange={(e) => setScenarioQ5(e.target.value)}
+                  rows={2}
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] resize-none"
+                  placeholder="Share your thoughts..."
+                />
+              </div>
+            </div>
+            )}
 
           </div>
         </div>
 
-        {/* Section 2: "Who are you seeking for?" - Expanded with full roles */}
-        <div className="card-warm-white rounded-3xl p-6 sm:p-8 space-y-4 border border-[var(--card-border)] shadow-md">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--card-border)]">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-[var(--accent-amber)]" />
-              <h3 className="font-editorial text-lg font-bold text-[var(--text-primary)]">
-                Who are you seeking for?
-              </h3>
-            </div>
-            <span className="text-[11px] font-mono text-[var(--accent-amber)] font-bold">
-              {seekingRoles.length} Selected
-            </span>
-          </div>
-
-          <p className="text-xs text-[var(--text-secondary)]">
-            Select collaborator roles you regularly hire or team up with across Writers, Directors, Camera crew, Audio, Post, and VFX. Your discovery feed will prioritize these profiles.
-          </p>
-
-          <div className="space-y-4 pt-1">
-            {ROLE_CATEGORIES.map((cat) => (
-              <div key={cat.category} className="space-y-2">
-                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
-                  {cat.category}
-                </h4>
-                <div className="flex flex-wrap gap-2">
-                  {cat.roles.map((role) => {
-                    const isSelected = seekingRoles.includes(role);
-                    return (
-                      <button
-                        type="button"
-                        key={role}
-                        onClick={() => toggleSeekingRole(role)}
-                        className={`px-3.5 py-1.5 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer select-none ${
-                          isSelected
-                            ? 'bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] font-bold shadow-md scale-102 border border-transparent'
-                            : 'bg-[var(--card-inner-bg)] hover:bg-[var(--tag-bg)] text-[var(--text-secondary)] border border-[var(--card-inner-border)]'
-                        }`}
-                      >
-                        {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
-                        <span>{role}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Section 3: Portfolio & Bio Section */}
+        {/* Section 2: Portfolio & Bio Section */}
         <div className="card-warm-white rounded-3xl p-6 sm:p-8 space-y-4 border border-[var(--card-border)] shadow-md">
           <div className="flex items-center gap-2 pb-3 border-b border-[var(--card-border)]">
             <FileText className="w-4 h-4 text-[var(--accent-amber)]" />
@@ -687,6 +740,49 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
               className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl p-3.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] leading-relaxed"
             />
           </div>
+        </div>
+
+        {/* Section 2b: Portfolio Images */}
+        <div className="card-warm-white rounded-3xl p-6 sm:p-8 space-y-4 border border-[var(--card-border)] shadow-md">
+          <div className="flex items-center justify-between pb-3 border-b border-[var(--card-border)]">
+            <div className="flex items-center gap-2">
+              <ImageIcon className="w-4 h-4 text-[var(--accent-amber)]" />
+              <h3 className="font-editorial text-lg font-bold text-[var(--text-primary)]">
+                Portfolio Images
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsPortfolioPickerOpen(true)}
+              className="px-3 py-1.5 rounded-full text-xs font-semibold bg-[var(--card-inner-bg)] hover:bg-[var(--accent-amber)]/10 text-[var(--text-primary)] border border-[var(--card-inner-border)] flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
+              <span>Upload Image</span>
+            </button>
+          </div>
+          
+          {portfolios.length === 0 ? (
+            <div className="text-center py-6">
+              <p className="text-xs text-[var(--text-muted)]">No portfolio images uploaded yet.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {portfolios.map((item) => (
+                <div key={item.id} className="relative group rounded-xl overflow-hidden border border-[var(--card-inner-border)] bg-[var(--card-inner-bg)]">
+                  {item.rawFileUrl && (
+                    <img src={item.rawFileUrl} alt="Portfolio" className="w-full h-32 object-cover" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPortfolios(portfolios.filter(p => p.id !== item.id))}
+                    className="absolute top-2 right-2 p-1.5 rounded-full bg-red-500/80 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Section 4: Dedicated Work Links (Clean Title without '*') */}
@@ -969,6 +1065,33 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
         isBanner={true}
         initialTab={coverPickerTab}
         onImageSelected={(url) => setCoverImageUrl(url)}
+      />
+
+      {/* Portfolio Image Picker */}
+      <ImagePickerModal
+        isOpen={isPortfolioPickerOpen}
+        onClose={() => setIsPortfolioPickerOpen(false)}
+        title="Upload Portfolio Image"
+        subtitle="Add a high-quality image of your work"
+        currentImageUrl=""
+        userName={fullName || 'Creator'}
+        isBanner={false}
+        initialTab="gallery"
+        onImageSelected={(url) => {
+          if (url) {
+            setPortfolios([
+              ...portfolios,
+              {
+                id: Date.now().toString(),
+                title: 'Portfolio Image',
+                mediaType: 'image',
+                rawFileUrl: url,
+                tags: [],
+              }
+            ]);
+          }
+          setIsPortfolioPickerOpen(false);
+        }}
       />
 
     </div>

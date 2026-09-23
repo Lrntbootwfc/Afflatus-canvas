@@ -21,6 +21,8 @@ import {
   signInWithEmail,
   signUpWithEmail,
 } from '../lib/firebase';
+import { POPULAR_LOCATIONS, validateLocation } from '../constants/roles';
+import { MapPin } from 'lucide-react';
 
 interface AuthScreenProps {
   onLoginSuccess: (profile: CreatorProfile, isNewSignup: boolean) => void;
@@ -47,6 +49,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [signupUsername, setSignupUsername] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
   const [signupRole, setSignupRole] = useState('Cinematographer');
+  const [signupLocation, setSignupLocation] = useState('');
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   // OTP Verification State
   const [otpCode, setOtpCode] = useState('');
@@ -120,6 +124,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       setErrorMessage('Please fill in your name, email, and password.');
       return;
     }
+    
+    if (!validateLocation(signupLocation)) {
+      setLocationError('Please enter a valid base location (e.g., "Los Angeles, CA" or "London, UK")');
+      return;
+    }
+    setLocationError(null);
 
     setIsLoading(true);
     setErrorMessage(null);
@@ -134,6 +144,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           email: signupEmail,
           password,
           primaryRole: signupRole,
+          location: signupLocation,
         }),
       });
 
@@ -187,7 +198,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         activeOtpEmail.trim().toLowerCase(),
         password,
         fullName.trim() || activeOtpEmail.split('@')[0],
-        signupRole
+        signupRole,
+        signupLocation
       );
 
       // Merge any extra fields from server response if present
@@ -236,6 +248,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           email: activeOtpEmail,
           password,
           primaryRole: signupRole,
+          location: signupLocation,
         }),
       });
       const data = await res.json();
@@ -537,6 +550,39 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     </optgroup>
                   ))}
                 </select>
+              </div>
+
+              {/* Base Location */}
+              <div>
+                <div className="flex justify-between mb-1.5">
+                  <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider">
+                    Base Location *
+                  </label>
+                </div>
+                <div className="relative">
+                  <MapPin className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-3" />
+                  <input
+                    id="input-signup-location"
+                    type="text"
+                    list="signup-locations-list"
+                    value={signupLocation}
+                    onChange={(e) => {
+                      setSignupLocation(e.target.value);
+                      setLocationError(null);
+                    }}
+                    placeholder="e.g. Los Angeles, CA"
+                    required
+                    className={`w-full bg-[var(--input-bg)] border ${locationError ? 'border-red-500' : 'border-[var(--input-border)]'} rounded-2xl pl-10 pr-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[#E58B13]`}
+                  />
+                  <datalist id="signup-locations-list">
+                    {POPULAR_LOCATIONS.map((loc) => (
+                      <option key={loc} value={loc} />
+                    ))}
+                  </datalist>
+                </div>
+                {locationError && (
+                  <p className="text-red-500 text-[10px] mt-1">{locationError}</p>
+                )}
               </div>
 
               {/* Password */}

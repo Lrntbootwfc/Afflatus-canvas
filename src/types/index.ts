@@ -47,6 +47,18 @@ export interface WorkLink {
   thumbnailUrl?: string;
 }
 
+export interface Post {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorRole: string;
+  authorAvatar?: string;
+  caption: string;
+  imageUrl?: string;
+  likes: string[];
+  createdAt: number;
+}
+
 export interface SocialLinks {
   linkedin?: string;
   instagram?: string;
@@ -66,7 +78,8 @@ export interface CreatorProfile {
   bio?: string;
   primaryRole: string;
   secondaryRoles: string[];
-  seekingRoles: string[]; // Roles user is looking for (e.g., ["Sound Designer", "Video Editor"])
+  /** @deprecated User needs are now handled conversationally via AI Match */
+  seekingRoles?: string[];
   location: string;
   travelRadiusMiles: number;
   dayRateUsd: number;
@@ -84,6 +97,23 @@ export interface CreatorProfile {
   // Collaborator Exchange & Verification Requirements
   unionStatus?: 'Union (IATSE / DGA / Local 600)' | 'Non-Union' | 'Both / Fi-Core';
   yearsExperience?: number;
+  experience?: {
+    yearsActive?: number;
+    projectsCompleted?: number;
+    roleSpecificProjects?: number;
+  };
+  collaborationProfile?: {
+    creativity: number;
+    communication: number;
+    flexibility: number;
+    reliability: number;
+    teamwork: number;
+    feedback_openness: number;
+    leadership: number;
+    technical_proficiency: number;
+    feedbackCount?: number;
+    confidenceScores?: Record<string, number>;
+  };
   specialtyTags?: string[];
   cameraBodyVerified?: string;
   lensMount?: string;
@@ -99,6 +129,7 @@ export interface CreatorProfile {
   preferredChannel?: 'WhatsApp' | 'Slack' | 'Email' | 'Phone';
   emergencyContact?: string;
   nextAvailabilityDate?: string;
+  collaborationCount?: number;
 }
 
 export interface RoleRequirement {

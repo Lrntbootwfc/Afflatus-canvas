@@ -47,7 +47,9 @@ export interface ConnectionRequest {
   senderId: string;
   recipientId: string;
   message: string;
-  status: 'pending' | 'accepted' | 'declined';
+  status: 'pending' | 'accepted' | 'declined' | 'collaborating' | 'completed';
+  collaborateRequestedBy?: string[];
+  feedbackGivenBy?: string[];
   createdAt: string;
   updatedAt?: string;
   projectId?: string;
@@ -264,12 +266,13 @@ export async function signInWithEmail(email: string, pass: string): Promise<{ us
 /**
  * Sign Up with Email / Password
  */
-export async function signUpWithEmail(email: string, pass: string, name?: string, role?: string): Promise<{ user: FirebaseUser; profile: CreatorProfile }> {
+export async function signUpWithEmail(email: string, pass: string, name?: string, role?: string, location?: string): Promise<{ user: FirebaseUser; profile: CreatorProfile }> {
   const result = await createUserWithEmailAndPassword(auth, email, pass);
   const profile = await syncUserProfileToFirestore(result.user, {
     name: name || email.split('@')[0],
     email: email,
-    primaryRole: role || 'Cinematographer'
+    primaryRole: role || 'Cinematographer',
+    location: location || 'not_specified'
   });
   return { user: result.user, profile };
 }
@@ -674,12 +677,12 @@ export async function createConnectionRequest(params: {
   params = { ...params, senderId };
 
   // Duplicate check
-  const existing = await fetchCollectionSafe<ConnectionRequest>('connections');
-  const dup = existing.find((c) => {
-    if (c.senderId !== params.senderId || c.recipientId !== params.recipientId) return false;
+  const senderDocs = await getDocs(query(collection(db, 'connections'), where('senderId', '==', senderId)));
+  const dup = senderDocs.docs.map(d => d.data() as ConnectionRequest).find((c) => {
+    if (c.recipientId !== params.recipientId) return false;
     if (params.taskId && c.taskId === params.taskId) return true;
-    if (params.projectId && !params.taskId && c.projectId === params.projectId) return true;
-    if (!params.taskId && !params.projectId && !c.taskId && !c.projectId) return true;
+    if (params.projectId && c.projectId === params.projectId) return true;
+    if (!params.taskId && !params.projectId) return true;
     return false;
   });
   if (dup) {
@@ -734,7 +737,7 @@ export async function createConnectionRequest(params: {
  * Uses filtered queries so Firestore rules can authorize participant-only reads.
  */
 export async function getConnectionsForUser(userId: string): Promise<ConnectionRequest[]> {
-  try {
+  const runQuery = async (): Promise<ConnectionRequest[]> => {
     const asSender = await getDocs(query(collection(db, 'connections'), where('senderId', '==', userId)));
     const asRecipient = await getDocs(query(collection(db, 'connections'), where('recipientId', '==', userId)));
     const map = new Map<string, ConnectionRequest>();
@@ -744,13 +747,24 @@ export async function getConnectionsForUser(userId: string): Promise<ConnectionR
     return Array.from(map.values()).sort((a, b) =>
       (b.createdAt || '').localeCompare(a.createdAt || '')
     );
-  } catch (err: any) {
-    console.warn('[Firestore] getConnectionsForUser failed:', err?.message || err);
-    const all = await fetchCollectionSafe<ConnectionRequest>('connections');
-    return all
-      .filter((c) => c.senderId === userId || c.recipientId === userId)
-      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  };
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await runQuery();
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      // "Target ID already exists" = Firestore SDK conflict from concurrent queries
+      if (msg.includes('Target ID already exists') && attempt < 2) {
+        console.warn(`[Firestore] getConnectionsForUser: query target conflict, retry ${attempt + 1}/3`);
+        await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+        continue;
+      }
+      console.warn('[Firestore] getConnectionsForUser failed:', msg);
+      return [];
+    }
   }
+  return [];
 }
 
 /**
@@ -798,6 +812,61 @@ export async function respondToConnection(
     }
   }
   return updated;
+}
+
+/**
+ * Request or upgrade a connection to collaboration status.
+ */
+export async function toggleCollaborationStatus(
+  connectionId: string,
+  actingUserId: string
+): Promise<ConnectionRequest> {
+  const current = auth.currentUser;
+  if (!current || current.uid !== actingUserId) {
+    throw new Error('You must be signed in to request collaboration.');
+  }
+
+  const res = await fetch(`/api/temporary-chat/${connectionId}/collaborate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-user-id': actingUserId
+    }
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to toggle collaboration');
+  }
+
+  const data = await res.json();
+  return data.connection;
+}
+
+/**
+ * Submit feedback for a creator and update their collaboration profile.
+ * Routes through the backend API since Firestore rules prevent writing to another user's doc.
+ */
+export async function submitCollaborationFeedback(
+  targetUserId: string,
+  ratings: Record<string, number>
+): Promise<void> {
+  const current = auth.currentUser;
+  if (!current) throw new Error('You must be signed in to submit feedback.');
+
+  const res = await fetch(`/api/feedback/${targetUserId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-user-id': current.uid,
+    },
+    body: JSON.stringify({ ratings }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to submit feedback.');
+  }
 }
 
 /**
