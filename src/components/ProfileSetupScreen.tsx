@@ -24,6 +24,8 @@ import {
   AlertCircle,
   IndianRupee,
   Image as ImageIcon,
+  Upload,
+  X,
 } from 'lucide-react';
 import type { CreatorProfile, WorkLink, SocialLinks, PortfolioItem } from '../types';
 import { UserAvatar } from './UserAvatar';
@@ -56,15 +58,18 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
   const [email, setEmail] = useState(initialProfile.email || '');
   const [avatarUrl, setAvatarUrl] = useState(initialProfile.avatarUrl || '');
   const [coverImageUrl, setCoverImageUrl] = useState(initialProfile.coverImageUrl || '');
-  const [offeredRoles, setOfferedRoles] = useState<string[]>(() => {
-    const fromSecondary = initialProfile.secondaryRoles || [];
-    const primary = initialProfile.primaryRole ? [initialProfile.primaryRole] : [];
-    return Array.from(new Set([...primary, ...fromSecondary].filter(Boolean)));
-  });
-  const [seekingRoles, setSeekingRoles] = useState<string[]>(initialProfile.seekingRoles || []);
+  const [primaryRole, setPrimaryRole] = useState<string>(initialProfile.primaryRole || '');
+  const [secondaryRoles, setSecondaryRoles] = useState<string[]>(
+    (initialProfile.secondaryRoles || []).filter((r) => r && r !== initialProfile.primaryRole).slice(0, 4)
+  );
+  const [seekingRoles, setSeekingRoles] = useState<string[]>(
+    (initialProfile.seekingRoles || []).slice(0, 5)
+  );
   const [travelPreference, setTravelPreference] = useState<string>(
     (initialProfile as any).travelPreference || 'within_city'
   );
+  const [resumeFileName, setResumeFileName] = useState<string>('');
+  const [resumeHint, setResumeHint] = useState<string | null>(null);
   const [location, setLocation] = useState(initialProfile.location || '');
   const [bio, setBio] = useState(initialProfile.bio || '');
   const [yearsActive, setYearsActive] = useState(initialProfile.experience?.yearsActive || 0);
@@ -105,10 +110,13 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
     setEmail(initialProfile.email || '');
     setAvatarUrl(initialProfile.avatarUrl || '');
     setCoverImageUrl(initialProfile.coverImageUrl || '');
-    const fromSecondary = initialProfile.secondaryRoles || [];
-    const primary = initialProfile.primaryRole ? [initialProfile.primaryRole] : [];
-    setOfferedRoles(Array.from(new Set([...primary, ...fromSecondary].filter(Boolean))));
-    setSeekingRoles(initialProfile.seekingRoles || []);
+    setPrimaryRole(initialProfile.primaryRole || '');
+    setSecondaryRoles(
+      (initialProfile.secondaryRoles || [])
+        .filter((r) => r && r !== initialProfile.primaryRole)
+        .slice(0, 4)
+    );
+    setSeekingRoles((initialProfile.seekingRoles || []).slice(0, 5));
     setTravelPreference((initialProfile as any).travelPreference || 'within_city');
     const sc = (initialProfile as any).collaborationScenarios || {};
     setScenarioQ1(sc.q1 || '');
@@ -260,8 +268,8 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
       }
     }
 
-    if (!offeredRoles.length) {
-      setSaveError('Select at least one role you offer.');
+    if (!primaryRole.trim()) {
+      setSaveError('Select a primary role you offer.');
       return;
     }
 
@@ -289,9 +297,9 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
         username: username.toLowerCase().replace(/[^a-z0-9_]/g, ''),
         name: fullName.trim(),
         email: email.trim(),
-        primaryRole: offeredRoles[0] || '',
-        secondaryRoles: offeredRoles.slice(1),
-        seekingRoles,
+        primaryRole: primaryRole.trim(),
+        secondaryRoles: secondaryRoles.filter((r) => r && r !== primaryRole).slice(0, 4),
+        seekingRoles: seekingRoles.slice(0, 5),
         travelPreference,
         collaborationScenarios: {
           q1: scenarioQ1,
@@ -467,7 +475,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                     )}
                   </div>
                   <p className="text-xs text-[var(--accent-amber)] font-medium">
-                    {offeredRoles[0] || 'Creator'}
+                    {primaryRole || 'Creator'}
                   </p>
                   <p className="text-[11px] text-[var(--text-muted)] flex items-center gap-1 font-mono">
                     <MapPin className="w-3 h-3 text-[var(--accent-amber)]" /> {location || 'Location not set'}
@@ -552,25 +560,19 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
               </div>
             </div>
 
-            {/* Roles you offer — multi-select */}
-            <MultiRoleSelect
-              id="profile-roles-offered"
-              label="What roles do you offer?"
-              hint="Select every role you can take on a production. First selected is treated as your primary role."
-              selected={offeredRoles}
-              onChange={setOfferedRoles}
-              required
-            />
-
-            {/* Roles you seek — multi-select */}
-            <MultiRoleSelect
-              id="profile-roles-seeking"
-              label="Who are you seeking?"
-              hint="People you usually need on a project. Used to personalize discovery."
-              selected={seekingRoles}
-              onChange={setSeekingRoles}
-            />
-
+            {/* Who are you seeking — multi-select, max 5 */}
+            <div className="col-span-1 sm:col-span-2 sm:col-start-1">
+              <MultiRoleSelect
+                id="profile-roles-seeking"
+                label="Who are you seeking?"
+                hint="Select up to 5 roles you usually need on a project. Used to personalize discovery."
+                selected={seekingRoles}
+                onChange={(roles) => setSeekingRoles(roles.slice(0, 5))}
+              />
+              {seekingRoles.length >= 5 && (
+                <p className="text-[10px] text-[var(--text-muted)] mt-1">Maximum of 5 seeking roles selected.</p>
+              )}
+            </div>
 
             {/* Base Location with Validation */}
             <div>
@@ -612,6 +614,106 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                   <span>{locationError}</span>
                 </p>
               )}
+            </div>
+
+            {/* What roles do you offer — Primary (1) + Secondary (up to 4) */}
+            <div className="col-span-1 sm:col-span-2 space-y-4 p-4 rounded-2xl bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)]">
+              <div className="flex items-center gap-2">
+                <Briefcase className="w-4 h-4 text-[var(--accent-amber)]" />
+                <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider">
+                  What roles do you offer?
+                </label>
+              </div>
+
+              {/* Primary role — single select */}
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
+                  Primary role <span className="text-red-500">*</span>
+                  <span className="font-normal text-[var(--text-muted)] ml-1.5">— select only one</span>
+                </label>
+                <select
+                  id="profile-primary-role"
+                  value={primaryRole}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setPrimaryRole(next);
+                    // Drop from secondary if it was selected there
+                    setSecondaryRoles((prev) => prev.filter((r) => r !== next));
+                  }}
+                  required
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
+                >
+                  <option value="" disabled>
+                    Select your primary role...
+                  </option>
+                  {(ALL_ROLES || []).map((role: string) => (
+                    <option key={role} value={role}>
+                      {role}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Secondary roles — multi up to 4, exclude primary */}
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
+                  Secondary roles
+                  <span className="font-normal text-[var(--text-muted)] ml-1.5">
+                    — optional, up to 4 (cannot include primary)
+                  </span>
+                </label>
+                <select
+                  id="profile-secondary-role-add"
+                  value=""
+                  onChange={(e) => {
+                    const role = e.target.value;
+                    if (!role) return;
+                    if (role === primaryRole) return;
+                    if (secondaryRoles.includes(role)) return;
+                    if (secondaryRoles.length >= 4) return;
+                    setSecondaryRoles([...secondaryRoles, role]);
+                  }}
+                  disabled={!primaryRole || secondaryRoles.length >= 4}
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] disabled:opacity-50"
+                >
+                  <option value="">
+                    {secondaryRoles.length >= 4
+                      ? 'Maximum 4 secondary roles reached'
+                      : !primaryRole
+                        ? 'Select primary role first...'
+                        : 'Add a secondary role...'}
+                  </option>
+                  {(ALL_ROLES || [])
+                    .filter((role: string) => role !== primaryRole && !secondaryRoles.includes(role))
+                    .map((role: string) => (
+                      <option key={role} value={role}>
+                        {role}
+                      </option>
+                    ))}
+                </select>
+                {secondaryRoles.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2.5">
+                    {secondaryRoles.map((role) => (
+                      <span
+                        key={role}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-[var(--tag-bg)] text-[var(--text-primary)] border border-[var(--tag-border)]"
+                      >
+                        {role}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSecondaryRoles(secondaryRoles.filter((r) => r !== role))
+                          }
+                          className="text-[var(--text-muted)] hover:text-red-500 cursor-pointer"
+                          title="Remove"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Factual Experience */}
@@ -671,25 +773,6 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
               <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider">
                 Collaboration Scenarios
               </label>
-
-              <div>
-                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
-                  Can you travel for work?
-                </label>
-                <select
-                  id="profile-travel-preference"
-                  value={travelPreference}
-                  onChange={(e) => setTravelPreference(e.target.value)}
-                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
-                >
-                  <option value="remote_only">Remote only</option>
-                  <option value="within_city">Within my city</option>
-                  <option value="nearby_cities">Nearby cities</option>
-                  <option value="nearby_metro">Nearby metro cities</option>
-                  <option value="nearby_states">Nearby states</option>
-                  <option value="anywhere">Anywhere</option>
-                </select>
-              </div>
               
               <div>
                 <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
@@ -759,6 +842,25 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                   placeholder="Share your thoughts..."
                 />
               </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
+                  6. Can you travel for work?
+                </label>
+                <select
+                  id="profile-travel-preference"
+                  value={travelPreference}
+                  onChange={(e) => setTravelPreference(e.target.value)}
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
+                >
+                  <option value="remote_only">Remote only</option>
+                  <option value="within_city">Within my city</option>
+                  <option value="nearby_cities">Nearby cities</option>
+                  <option value="nearby_metro">Nearby metro cities</option>
+                  <option value="nearby_states">Nearby states</option>
+                  <option value="anywhere">Anywhere</option>
+                </select>
+              </div>
             </div>
             )}
 
@@ -772,6 +874,90 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
             <h3 className="font-editorial text-lg font-bold text-[var(--text-primary)]">
               Portfolio &amp; Bio ("More About You")
             </h3>
+          </div>
+
+          {/* Resume / CV upload — frontend-only text autofill */}
+          <div className="p-4 rounded-2xl bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-primary)]">
+                  Resume / CV (optional)
+                </label>
+                <p className="text-[10px] text-[var(--text-muted)] mt-0.5">
+                  Upload a .txt or .md file to auto-fill bio (and email if found). PDF parsing needs a backend; plain text works fully on the client.
+                </p>
+              </div>
+              <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-[var(--card-bg)] border border-[var(--card-border)] hover:border-[var(--accent-amber)] cursor-pointer transition-colors">
+                <Upload className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
+                <span>{resumeFileName ? 'Replace file' : 'Upload resume'}</span>
+                <input
+                  type="file"
+                  accept=".txt,.md,text/plain,text/markdown"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!file) return;
+                    setResumeFileName(file.name);
+                    setResumeHint(null);
+                    try {
+                      const text = await file.text();
+                      const trimmed = text.trim();
+                      if (!trimmed) {
+                        setResumeHint('File was empty — nothing to autofill.');
+                        return;
+                      }
+                      // Basic email extraction
+                      const emailMatch = trimmed.match(
+                        /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
+                      );
+                      if (emailMatch && !email.trim()) {
+                        setEmail(emailMatch[0]);
+                      }
+                      // Use first ~800 chars as bio seed if bio empty
+                      if (!bio.trim()) {
+                        const snippet = trimmed.replace(/\s+/g, ' ').slice(0, 800);
+                        setBio(snippet);
+                      } else {
+                        // Append a short note so user can merge
+                        setBio((prev) =>
+                          prev.trim().endsWith(trimmed.slice(0, 120))
+                            ? prev
+                            : `${prev.trim()}\n\n--- from resume ---\n${trimmed.slice(0, 400)}`
+                        );
+                      }
+                      setResumeHint(
+                        `Loaded “${file.name}”. Bio${emailMatch && !email.trim() ? ' and email' : ''} updated from text content.`
+                      );
+                    } catch {
+                      setResumeHint('Could not read this file. Try a .txt or .md resume.');
+                    }
+                  }}
+                />
+              </label>
+            </div>
+            {resumeFileName && (
+              <div className="flex items-center gap-2 text-[11px] text-[var(--text-secondary)]">
+                <FileText className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
+                <span className="font-mono truncate">{resumeFileName}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResumeFileName('');
+                    setResumeHint(null);
+                  }}
+                  className="text-red-500 hover:underline ml-auto cursor-pointer"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+            {resumeHint && (
+              <p className="text-[11px] text-[var(--accent-amber)] flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                <span>{resumeHint}</span>
+              </p>
+            )}
           </div>
 
           <div>
