@@ -439,7 +439,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (saved && AVAILABLE_FONT_PRESETS.some((f) => f.id === saved)) {
       return saved;
     }
-    return 'playfair';
+    return 'space-grotesk';
   });
 
   // Load saved palette
