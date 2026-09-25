@@ -3,13 +3,12 @@ import { X, MessageSquare, Send, Loader2, Users } from 'lucide-react';
 import type { CreatorProfile } from '../../types';
 import {
   getConnectionsForUser,
-  subscribeToMessages,
-  sendMessage,
-  markMessagesRead,
   getProfileFromFirestore,
+  toggleCollaborationStatus,
   type ConnectionRequest,
   type ChatMessage,
 } from '../../lib/firebase';
+import { affilApi } from '../../lib/affilApi';
 import { UserAvatar } from '../UserAvatar';
 
 interface MessengerDrawerProps {
@@ -18,6 +17,8 @@ interface MessengerDrawerProps {
   currentUser: CreatorProfile;
   /** Optional connection to open directly */
   initialConnectionId?: string | null;
+  /** Optional callback to navigate to a user's profile */
+  onNavigateToProfile?: (creatorId: string) => void;
 }
 
 type PeerMap = Record<string, CreatorProfile | null>;
@@ -27,6 +28,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
   onClose,
   currentUser,
   initialConnectionId,
+  onNavigateToProfile,
 }) => {
   const [connections, setConnections] = useState<ConnectionRequest[]>([]);
   const [loadingList, setLoadingList] = useState(true);
@@ -39,7 +41,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const accepted = useMemo(
-    () => connections.filter((c) => c.status === 'accepted'),
+    () => connections.filter((c) => c.status === 'accepted' || c.status === 'collaborating' || c.status === 'completed'),
     [connections]
   );
 
@@ -61,7 +63,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
         const list = await getConnectionsForUser(currentUser.id);
         if (cancelled) return;
         setConnections(list);
-        const acceptedList = list.filter((c) => c.status === 'accepted');
+        const acceptedList = list.filter((c) => c.status === 'accepted' || c.status === 'collaborating' || c.status === 'completed');
         if (initialConnectionId && acceptedList.some((c) => c.id === initialConnectionId)) {
           setSelectedId(initialConnectionId);
         } else if (!selectedId && acceptedList[0]) {
@@ -90,20 +92,34 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
     };
   }, [isOpen, currentUser.id, initialConnectionId]);
 
+  // Poll for messages in temporary chat session
   useEffect(() => {
     if (!isOpen || !selectedId) {
       setMessages([]);
       return;
     }
-    const unsub = subscribeToMessages(
-      selectedId,
-      (msgs) => {
-        setMessages(msgs);
-        markMessagesRead(selectedId, currentUser.id).catch(() => {});
-      },
-      (err) => setError(err.message)
-    );
-    return () => unsub();
+
+    let isMounted = true;
+
+    const fetchMessages = async () => {
+      try {
+        const res = await affilApi.getTemporaryChat(selectedId);
+        if (isMounted) {
+          setMessages(res.messages);
+          await affilApi.markTemporaryChatRead(selectedId);
+        }
+      } catch (err: any) {
+        if (isMounted) setError(err.message || 'Failed to fetch messages');
+      }
+    };
+
+    fetchMessages();
+    const intervalId = setInterval(fetchMessages, 3000); // poll every 3s
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
   }, [isOpen, selectedId, currentUser.id]);
 
   useEffect(() => {
@@ -116,18 +132,29 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
     setSending(true);
     setError(null);
     try {
-      await sendMessage({
-        connectionId: selected.id,
-        senderId: currentUser.id,
-        recipientId: peerId,
-        text: draft,
-        senderName: currentUser.name,
-      });
+      await affilApi.sendTemporaryChat(
+        selected.id,
+        peerId,
+        draft
+      );
+      // Optimistically add message or fetch again
+      const res = await affilApi.getTemporaryChat(selected.id);
+      setMessages(res.messages);
       setDraft('');
     } catch (err: any) {
       setError(err?.message || 'Failed to send message.');
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleToggleCollaboration = async () => {
+    if (!selected || !currentUser) return;
+    try {
+      const updated = await toggleCollaborationStatus(selected.id, currentUser.id);
+      setConnections(prev => prev.map(c => c.id === updated.id ? updated : c));
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -204,8 +231,52 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             {selected ? (
               <>
-                <div className="px-4 py-2 border-b border-[var(--card-border)] text-xs font-medium text-[var(--text-primary)] shrink-0">
-                  {peer?.name || 'Conversation'}
+                <div className="px-4 py-2 border-b border-[var(--card-border)] flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-medium text-[var(--text-primary)]">
+                      {peer?.name || 'Conversation'}
+                    </span>
+                    {peerId && (
+                      <button 
+                        onClick={() => {
+                          if (onNavigateToProfile) {
+                            onNavigateToProfile(peerId);
+                            onClose();
+                          } else {
+                            window.open(`/explore/${peerId}`, '_blank');
+                          }
+                        }}
+                        className="text-[10px] text-[var(--accent-amber)] hover:underline flex items-center gap-1 cursor-pointer bg-transparent border-none p-0"
+                      >
+                        View Profile
+                      </button>
+                    )}
+                  </div>
+                  
+                  {/* Collaboration Status Button */}
+                  {selected.status === 'collaborating' ? (
+                    <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 text-[10px] font-bold tracking-wider uppercase">
+                      Collaborating
+                    </span>
+                  ) : selected.status === 'completed' ? (
+                    <span className="px-3 py-1 rounded-full bg-[var(--card-inner-bg)] text-[var(--text-muted)] border border-[var(--card-inner-border)] text-[10px] font-bold tracking-wider uppercase">
+                      Completed
+                    </span>
+                  ) : (
+                    <button
+                      onClick={handleToggleCollaboration}
+                      disabled={selected.collaborateRequestedBy?.includes(currentUser.id)}
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-colors cursor-pointer shadow-sm ${
+                        selected.collaborateRequestedBy?.includes(currentUser.id)
+                          ? 'bg-[var(--card-inner-bg)] text-[var(--text-muted)] border border-[var(--card-inner-border)] cursor-not-allowed'
+                          : 'bg-[var(--accent-amber)] text-[#181614] hover:opacity-90'
+                      }`}
+                    >
+                      {selected.collaborateRequestedBy?.includes(currentUser.id)
+                        ? 'Waiting for partner...'
+                        : 'Collaborate'}
+                    </button>
+                  )}
                 </div>
                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
                   {messages.length === 0 && (

@@ -334,6 +334,11 @@ export default function App() {
           }}
           currentUser={currentUser}
           initialConnectionId={messengerConnectionId}
+          onNavigateToProfile={(creatorId) => {
+            setExploreNavParams({ tab: 'creators', search: '', entity: { type: 'creator', id: creatorId } });
+            setCurrentScreen('explore');
+            setIsMessengerOpen(false);
+          }}
         />
       )}
 

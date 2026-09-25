@@ -15,6 +15,8 @@ import {
   ShieldCheck,
   RefreshCw,
   CheckCircle2,
+  Plus,
+  X,
 } from 'lucide-react';
 import type {
   ExploreFeedResponse,
@@ -41,6 +43,8 @@ import {
   fetchExploreFeedFromFirestore,
   createConnectionRequest,
 } from '../../lib/firebase';
+import { GlobalPostsFeed } from '../feed/GlobalPostsFeed';
+import { CreatePostInput } from '../feed/CreatePostInput';
 
 interface ExploreScreenProps {
   currentUser: CreatorProfile | null;
@@ -77,12 +81,17 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
   initialSearch,
   initialEntity,
 }) => {
-  const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'all');
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'creators');
+  const [mainTab, setMainTab] = useState<'explore' | 'feed'>('explore');
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory || 'all');
   const [searchQuery, setSearchQuery] = useState<string>(initialSearch || '');
   const [feedData, setFeedData] = useState<ExploreFeedResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Post creation modal
+  const [isCreatePostModalOpen, setIsCreatePostModalOpen] = useState(false);
+  const [feedRefreshTrigger, setFeedRefreshTrigger] = useState(0);
 
   // Selected modals
   const [selectedWork, setSelectedWork] = useState<WorkShowcase | null>(null);
@@ -259,6 +268,16 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
       }
     });
   };
+  const isAllEmpty = useMemo(() => {
+    if (!feedData) return false;
+    return (
+      feedData.projects.length === 0 &&
+      feedData.tasks.length === 0 &&
+      feedData.featuredWorks.length === 0 &&
+      feedData.clubs.length === 0 &&
+      feedData.suggestedCreators.length === 0
+    );
+  }, [feedData]);
 
   if (viewingPublicProfileCreatorId) {
     return (
@@ -314,16 +333,6 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
     );
   }
 
-  const isAllEmpty = useMemo(() => {
-    if (!feedData) return false;
-    return (
-      feedData.projects.length === 0 &&
-      feedData.tasks.length === 0 &&
-      feedData.featuredWorks.length === 0 &&
-      feedData.clubs.length === 0 &&
-      feedData.suggestedCreators.length === 0
-    );
-  }, [feedData]);
 
   const renderEmptyState = (entityTitle: string) => (
     <div className="card-warm-white p-10 sm:p-14 rounded-3xl border border-[var(--card-border)] text-center space-y-4 my-4">
@@ -379,24 +388,12 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
           </p>
         </div>
 
-        {/* Discovery Radar Counter Bar */}
-        {feedData && (
+        {/* User Stats Counter Bar */}
+        {currentUser && (
           <div className="flex items-center gap-2 p-2 rounded-2xl bg-[var(--card-inner-bg)]/80 border border-[var(--card-border)] text-xs shrink-0 flex-wrap">
-            <div className="px-3 py-1.5 rounded-xl bg-[var(--card-bg)] border border-[var(--card-border)]">
-              <span className="text-[10px] font-mono text-[var(--text-muted)] block uppercase tracking-wider">Briefs</span>
-              <span className="font-mono font-bold text-sm text-[var(--accent-amber)]">{feedData.counts.projects}</span>
-            </div>
-            <div className="px-3 py-1.5 rounded-xl bg-[var(--card-bg)] border border-[var(--card-border)]">
-              <span className="text-[10px] font-mono text-[var(--text-muted)] block uppercase tracking-wider">Calls</span>
-              <span className="font-mono font-bold text-sm text-emerald-500">{feedData.counts.tasks}</span>
-            </div>
-            <div className="px-3 py-1.5 rounded-xl bg-[var(--card-bg)] border border-[var(--card-border)]">
-              <span className="text-[10px] font-mono text-[var(--text-muted)] block uppercase tracking-wider">Works</span>
-              <span className="font-mono font-bold text-sm text-[var(--text-primary)]">{feedData.counts.works}</span>
-            </div>
-            <div className="px-3 py-1.5 rounded-xl bg-[var(--card-bg)] border border-[var(--card-border)]">
-              <span className="text-[10px] font-mono text-[var(--text-muted)] block uppercase tracking-wider">Guilds</span>
-              <span className="font-mono font-bold text-sm text-[var(--text-primary)]">{feedData.counts.clubs}</span>
+            <div className="px-3 py-1.5 rounded-xl bg-[var(--card-bg)] border border-[var(--card-border)] flex items-center gap-2">
+              <span className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">My Collaborations</span>
+              <span className="font-mono font-bold text-sm text-[var(--accent-amber)]">{currentUser.collaborationCount || 0}</span>
             </div>
           </div>
         )}
@@ -421,9 +418,47 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
         )}
       </div>
 
-      {/* 2. Search & Category Filter Toolbar */}
-      <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row items-center gap-3">
+      {/* 2. Main Navigation Tabs */}
+      <div className="flex items-center justify-between border-b border-[var(--card-border)] pb-4 mb-6">
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => setMainTab('explore')}
+            className={`px-4 py-2 text-sm font-bold rounded-full transition-colors ${
+              mainTab === 'explore'
+                ? 'bg-[var(--text-primary)] text-[var(--card-bg)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            Explore Creators
+          </button>
+          <button
+            onClick={() => setMainTab('feed')}
+            className={`px-4 py-2 text-sm font-bold rounded-full transition-colors ${
+              mainTab === 'feed'
+                ? 'bg-[var(--text-primary)] text-[var(--card-bg)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            Explore Projects
+          </button>
+        </div>
+
+        {currentUser && mainTab === 'feed' && (
+          <button
+            onClick={() => setIsCreatePostModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[var(--accent-amber)] hover:bg-[#e69c1e] text-black font-bold rounded-full transition-colors text-sm shrink-0"
+          >
+            <Plus size={16} />
+            <span className="hidden sm:inline">Create Post</span>
+          </button>
+        )}
+      </div>
+
+      {/* 3. Search Toolbar (only for 'explore' tab) */}
+      {mainTab === 'explore' && (
+      <>
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row items-center gap-3">
           {/* Search Input */}
           <div className="relative w-full sm:flex-1">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
@@ -446,124 +481,6 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
-
-        {/* Category Pills */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-          {CATEGORIES.map((cat) => (
-            <button
-              key={cat.id}
-              id={`cat-pill-${cat.id}`}
-              onClick={() => setSelectedCategory(cat.id)}
-              className={`px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                selectedCategory === cat.id
-                  ? 'bg-[var(--nav-item-active-bg)] text-[var(--nav-item-active-text)] shadow-sm'
-                  : 'bg-[var(--card-bg)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--card-border)]'
-              }`}
-            >
-              {cat.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* 3. Content Type Tabs */}
-      <div className="flex items-center gap-1 border-b border-[var(--card-border)] overflow-x-auto pb-0 scrollbar-none">
-        <button
-          id="tab-all"
-          onClick={() => setActiveTab('all')}
-          className={`px-4 py-3 text-xs font-mono font-semibold uppercase tracking-wider whitespace-nowrap border-b-2 transition-all cursor-pointer ${
-            activeTab === 'all'
-              ? 'border-[var(--accent-amber)] text-[var(--accent-amber)] font-bold'
-              : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-          }`}
-        >
-          All Discovery
-        </button>
-
-        <button
-          id="tab-projects"
-          onClick={() => setActiveTab('projects')}
-          className={`px-4 py-3 text-xs font-mono font-semibold uppercase tracking-wider whitespace-nowrap border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'projects'
-              ? 'border-[var(--accent-amber)] text-[var(--accent-amber)] font-bold'
-              : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-          }`}
-        >
-          <span>Production Briefs</span>
-          {feedData && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--card-inner-bg)] font-mono">
-              {feedData.counts.projects}
-            </span>
-          )}
-        </button>
-
-        <button
-          id="tab-tasks"
-          onClick={() => setActiveTab('tasks')}
-          className={`px-4 py-3 text-xs font-mono font-semibold uppercase tracking-wider whitespace-nowrap border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'tasks'
-              ? 'border-[var(--accent-amber)] text-[var(--accent-amber)] font-bold'
-              : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-          }`}
-        >
-          <span>Crew Callouts</span>
-          {feedData && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--card-inner-bg)] font-mono">
-              {feedData.counts.tasks}
-            </span>
-          )}
-        </button>
-
-        <button
-          id="tab-works"
-          onClick={() => setActiveTab('works')}
-          className={`px-4 py-3 text-xs font-mono font-semibold uppercase tracking-wider whitespace-nowrap border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'works'
-              ? 'border-[var(--accent-amber)] text-[var(--accent-amber)] font-bold'
-              : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-          }`}
-        >
-          <span>Exhibition Works</span>
-          {feedData && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--card-inner-bg)] font-mono">
-              {feedData.counts.works}
-            </span>
-          )}
-        </button>
-
-        <button
-          id="tab-clubs"
-          onClick={() => setActiveTab('clubs')}
-          className={`px-4 py-3 text-xs font-mono font-semibold uppercase tracking-wider whitespace-nowrap border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'clubs'
-              ? 'border-[var(--accent-amber)] text-[var(--accent-amber)] font-bold'
-              : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-          }`}
-        >
-          <span>Guild Societies</span>
-          {feedData && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--card-inner-bg)] font-mono">
-              {feedData.counts.clubs}
-            </span>
-          )}
-        </button>
-
-        <button
-          id="tab-creators"
-          onClick={() => setActiveTab('creators')}
-          className={`px-4 py-3 text-xs font-mono font-semibold uppercase tracking-wider whitespace-nowrap border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'creators'
-              ? 'border-[var(--accent-amber)] text-[var(--accent-amber)] font-bold'
-              : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-          }`}
-        >
-          <span>Talent Dossiers</span>
-          {feedData && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--card-inner-bg)] font-mono">
-              {feedData.counts.creators}
-            </span>
-          )}
-        </button>
       </div>
 
       {/* 4. Content Grid or Loading State */}
@@ -853,6 +770,13 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
           )}
         </div>
       )}
+      </>
+      )}
+
+      {/* Global Posts Feed */}
+      {mainTab === 'feed' && (
+        <GlobalPostsFeed currentUser={currentUser} refreshTrigger={feedRefreshTrigger} />
+      )}
 
       {/* 5. Detail Modals */}
       <WorkDetailModal
@@ -950,6 +874,32 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
                   : 'Collaboration Proposal Sent'}
               </p>
               <p className="text-[11px] text-[var(--text-secondary)]">{toastMessage}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Create Post Modal */}
+      {isCreatePostModalOpen && currentUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-[var(--app-bg)] w-full max-w-xl rounded-3xl overflow-hidden shadow-2xl relative border border-[var(--card-border)]">
+            <button 
+              onClick={() => setIsCreatePostModalOpen(false)}
+              className="absolute top-4 right-4 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors z-10"
+            >
+              <X size={20} />
+            </button>
+            <div className="p-6 pb-2 border-b border-[var(--card-border)] bg-[var(--card-bg)]">
+              <h2 className="text-xl font-bold font-editorial">Create New Post</h2>
+            </div>
+            <div className="p-6 bg-[var(--app-bg)]">
+              <CreatePostInput 
+                currentUser={currentUser} 
+                onPostCreated={() => {
+                  setIsCreatePostModalOpen(false);
+                  setFeedRefreshTrigger(prev => prev + 1);
+                }}
+              />
             </div>
           </div>
         </div>

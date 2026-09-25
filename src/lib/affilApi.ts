@@ -41,6 +41,8 @@ export const affilApi = {
   removePortfolioItem: (id: string) =>
     client.delete(`/profiles/me/portfolio/${id}`).then((r) => r.data),
   refreshEmbedding: () => client.post('/profiles/me/embed').then((r) => r.data),
+  analyzeCollaborationProfile: (answers: Record<string, string>) =>
+    client.post('/profiles/analyze-collaboration', { answers }).then((r) => r.data),
 
   // Past projects / experience
   getPastProjects: () => client.get('/profiles/me/projects').then((r) => r.data),
@@ -98,10 +100,20 @@ export const affilApi = {
 
   // Collaboration
   myCollaborations: () => client.get('/collaborations/me').then((r) => r.data),
+  listCollaborations: () => client.get('/collaborations/me').then((r) => r.data),
   collaborationScore: (userA: string, userB: string) =>
     client.get('/collaborations/score', { params: { userA, userB } }).then((r) => r.data),
   collaborationFeedback: (otherUserId: string, rating: number) =>
     client.post('/collaborations/feedback', { otherUserId, rating }).then((r) => r.data),
+  addCollaborationFeedback: (otherUserId: string, rating: number) =>
+    client.post('/collaborations/feedback', { otherUserId, rating }).then((r) => r.data),
+
+  // Temporary Chat
+  getTemporaryChat: (connectionId: string) => client.get(`/temporary-chat/${connectionId}`).then((r) => r.data),
+  sendTemporaryChat: (connectionId: string, recipientId: string, text: string) => 
+    client.post(`/temporary-chat/${connectionId}`, { recipientId, text }).then((r) => r.data),
+  markTemporaryChatRead: (connectionId: string) => 
+    client.post(`/temporary-chat/${connectionId}/read`).then((r) => r.data),
 
   // Brief
   parseBriefV2: (text: string) => client.post('/briefs/parse-v2', { text }).then((r) => r.data),
@@ -111,6 +123,14 @@ export const affilApi = {
     client
       .post('/assistant/chat', { prompt, userId, currentUserProfile })
       .then((r) => r.data),
+
+  // Posts
+  createPost: (body: { authorId: string; authorName: string; authorRole: string; authorAvatar?: string; caption: string; imageUrl?: string }) =>
+    client.post('/posts', body).then((r) => r.data),
+  getGlobalFeed: () => client.get('/posts').then((r) => r.data),
+  getUserPosts: (userId: string) => client.get(`/posts/user/${userId}`).then((r) => r.data),
+  toggleLike: (postId: string, userId: string) => client.post(`/posts/${postId}/like`, { userId }).then((r) => r.data),
+  deletePost: (postId: string) => client.delete(`/posts/${postId}`).then((r) => r.data),
 };
 
 export default affilApi;

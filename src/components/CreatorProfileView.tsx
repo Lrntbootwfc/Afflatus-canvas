@@ -513,6 +513,34 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
               })}
             </div>
           </div>
+
+          {/* Section 4: AI Collaboration Profile */}
+          {formData.collaborationProfile && (
+            <div className="bg-[#12141C] rounded-2xl p-6 border border-[#222738] space-y-4 shadow-2xl">
+              <div className="flex items-center gap-2 text-[#8B5CF6] font-semibold text-sm">
+                <Sparkles className="w-4 h-4 text-[#8B5CF6]" />
+                <h2>AI Collaboration Assessment</h2>
+              </div>
+              <p className="text-xs text-[#94A3B8]">
+                Scores based on your scenario responses. Used strictly for bidirectional matching.
+              </p>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {Object.entries(formData.collaborationProfile)
+                  .filter(([key]) => key !== 'confidenceScores')
+                  .map(([dimension, score]) => (
+                    <div key={dimension} className="p-3 bg-[#0C0E14] border border-[#222738] rounded-xl flex flex-col items-center text-center justify-center gap-1">
+                      <span className="text-[10px] text-[#94A3B8] uppercase tracking-wider font-semibold">
+                        {dimension.replace('_', ' ')}
+                      </span>
+                      <span className="text-xl font-bold text-[#F8FAFC] font-mono">
+                        {typeof score === 'number' ? score.toFixed(1) : score}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right Column: Gear Inventory & Portfolio Assets */}

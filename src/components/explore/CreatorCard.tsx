@@ -96,20 +96,33 @@ export const CreatorCard: React.FC<CreatorCardProps> = ({ creator, onOpenDetail,
             </div>
           )}
 
-          {/* Location & Rates Meta Row */}
+          {/* Location & Collaborations Meta Row */}
           <div className="flex items-center justify-between p-2.5 bg-[var(--card-inner-bg)]/80 rounded-xl border border-[var(--card-inner-border)] text-xs">
             <div className="flex items-center gap-1 text-[var(--text-muted)] truncate">
               <MapPin className="w-3.5 h-3.5 text-[var(--accent-amber)] shrink-0" />
               <span className="truncate">{creator.location || 'Mumbai, IN'}</span>
             </div>
-            <div className="font-mono font-bold text-[var(--text-primary)] text-xs">
-              {creator.dayRateUsd != null && creator.dayRateUsd > 0 ? (
-              <>
-              ₹{creator.dayRateUsd.toLocaleString('en-IN')}<span className="text-[10px] font-normal text-[var(--text-muted)]">/day</span>
-              </>
-            ) : (
-              <span className="text-[10px] font-normal text-[var(--text-muted)]">Rate on request</span>
-            )}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 font-mono font-bold text-[var(--text-primary)] text-xs">
+                <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                <span>{creator.collaborationCount || 0}</span>
+                <span className="text-[10px] font-normal text-[var(--text-muted)]">collabs</span>
+              </div>
+              {creator.collaborationProfile?.feedbackCount ? (
+                <div className="flex items-center gap-0.5 font-mono font-bold text-[var(--accent-amber)] text-xs">
+                  <span>★</span>
+                  <span>
+                    {(
+                      Object.entries(creator.collaborationProfile)
+                        .filter(([k]) => k !== 'feedbackCount' && k !== 'confidenceScores' && typeof creator.collaborationProfile![k as keyof typeof creator.collaborationProfile] === 'number')
+                        .reduce((sum, [, v]) => sum + (v as number), 0) /
+                      Object.entries(creator.collaborationProfile)
+                        .filter(([k]) => k !== 'feedbackCount' && k !== 'confidenceScores' && typeof creator.collaborationProfile![k as keyof typeof creator.collaborationProfile] === 'number')
+                        .length
+                    ).toFixed(1)}
+                  </span>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
