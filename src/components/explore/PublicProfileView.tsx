@@ -27,10 +27,12 @@ import affilApi from '../../lib/affilApi';
 import {
   getProfileFromFirestore,
   fetchExploreFeedFromFirestore,
+  getUserWorksFromFirestore,
   createConnectionRequest,
   getConnectionsForUser,
   submitCollaborationFeedback,
   toggleCollaborationStatus,
+  computeOverallRating,
 } from '../../lib/firebase';
 import { FeedbackModal } from './FeedbackModal';
 
@@ -60,6 +62,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
   const [participatedProjects, setParticipatedProjects] = useState<Project[]>([]);
   const [works, setWorks] = useState<WorkShowcase[]>([]);
   const [userPosts, setUserPosts] = useState<Post[]>([]);
+  const [postsLoading, setPostsLoading] = useState(true);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -99,26 +102,67 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
           setCreator(profile);
         }
 
-        const feed = await fetchExploreFeedFromFirestore();
+        const [feed, worksDirect] = await Promise.all([
+          fetchExploreFeedFromFirestore(),
+          getUserWorksFromFirestore(creatorId),
+        ]);
         if (!isMounted) return;
 
-        const creatorWorks = (feed.featuredWorks || []).filter(
+        const fromFeed = (feed.featuredWorks || []).filter(
           (w) => w.creatorId === creatorId || (w.collaboratorIds || []).includes(creatorId)
         );
+        const byId = new Map<string, any>();
+        for (const w of [...(worksDirect || []), ...fromFeed]) {
+          if (w?.id) byId.set(w.id, w);
+        }
+        const creatorWorks = Array.from(byId.values());
         const lead = (feed.projects || []).filter((p: any) => p.seekerId === creatorId);
         const participated = (feed.projects || []).filter(
           (p: any) => (p.collaboratorIds || []).includes(creatorId) && p.seekerId !== creatorId
         );
 
         setWorks(creatorWorks);
+        setCreator((prev) =>
+          prev
+            ? {
+                ...prev,
+                worksCount:
+                  typeof prev.worksCount === 'number' && prev.worksCount >= creatorWorks.length
+                    ? prev.worksCount
+                    : creatorWorks.length,
+              }
+            : prev
+        );
         setLeadProjects(lead);
         setParticipatedProjects(participated);
 
         try {
+          if (isMounted) setPostsLoading(true);
           const userPostsData = await affilApi.getUserPosts(creatorId);
-          if (isMounted) setUserPosts(userPostsData.posts || []);
+          const list = Array.isArray(userPostsData?.posts)
+            ? userPostsData.posts
+            : Array.isArray(userPostsData)
+              ? userPostsData
+              : [];
+          if (isMounted) {
+            setUserPosts(list);
+            setCreator((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    postsCount:
+                      typeof prev.postsCount === 'number' && prev.postsCount >= list.length
+                        ? prev.postsCount
+                        : list.length,
+                  }
+                : prev
+            );
+          }
         } catch (e) {
           console.error('Failed to fetch posts:', e);
+          if (isMounted) setUserPosts([]);
+        } finally {
+          if (isMounted) setPostsLoading(false);
         }
 
         if (creatorWorks.length > 0) setActiveTab('works');
@@ -336,6 +380,21 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 </div>
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-[var(--card-bg,#1e1c19)] via-transparent to-transparent" />
+              {(() => {
+                const overall = computeOverallRating(creator);
+                if (!overall) return null;
+                return (
+                  <div className="absolute top-3 right-3 sm:top-4 sm:right-4 z-10 px-3 py-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/15 text-white shadow-lg">
+                    <div className="flex items-center gap-1.5 text-sm font-bold">
+                      <span className="text-[var(--accent-amber)]">★</span>
+                      <span>{overall.rating.toFixed(1)}</span>
+                    </div>
+                    <p className="text-[9px] text-white/75 mt-0.5">
+                      Based on {overall.reviewCount} collaboration review{overall.reviewCount !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Profile Avatar & Details Header */}
@@ -449,7 +508,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Public Showcases</p>
                   <p className="font-semibold text-[var(--text-primary)] mt-0.5">
-                    {works.length} {works.length === 1 ? 'Showcase' : 'Showcases'}
+                    {(typeof creator.worksCount === 'number' ? creator.worksCount : works.length)} {(typeof creator.worksCount === 'number' ? creator.worksCount : works.length) === 1 ? 'Showcase' : 'Showcases'}
                   </p>
                 </div>
 
@@ -474,7 +533,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>Public Works ({works.length})</span>
+              <span>Public Works ({typeof (creator as any).worksCount === 'number' && (creator as any).worksCount >= works.length ? (creator as any).worksCount : Math.max(works.length, (creator as any).worksCount || 0)})</span>
             </button>
 
             <button
@@ -486,7 +545,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
               }`}
             >
               <Film className="w-3.5 h-3.5" />
-              <span>Posts ({userPosts.length})</span>
+              <span>Posts ({postsLoading ? '…' : Math.max(userPosts.length, typeof (creator as any).postsCount === 'number' ? (creator as any).postsCount : 0)})</span>
             </button>
 
             <button
@@ -589,7 +648,15 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
 
               {currentUser && currentUser.id === creator.id && (
                 <CreatePostInput currentUser={currentUser} onPostCreated={() => {
-                  affilApi.getUserPosts(creator.id).then((res) => setUserPosts(res.posts || []));
+                  setPostsLoading(true);
+                  affilApi
+                    .getUserPosts(creator.id)
+                    .then((res) => {
+                      const list = Array.isArray(res?.posts) ? res.posts : Array.isArray(res) ? res : [];
+                      setUserPosts(list);
+                    })
+                    .catch(() => setUserPosts([]))
+                    .finally(() => setPostsLoading(false));
                 }} />
               )}
 
@@ -603,7 +670,11 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 <div className="columns-1 sm:columns-2 lg:columns-3 gap-6 space-y-6">
                   {userPosts.map((post) => (
                     <div key={post.id} className="break-inside-avoid mb-6">
-                      <PostCard post={post} currentUserId={currentUser?.id || ''} />
+                      <PostCard
+                        post={post}
+                        currentUserId={currentUser?.id || ''}
+                        onDeleted={() => setUserPosts((prev) => prev.filter((x) => x.id !== post.id))}
+                      />
                     </div>
                   ))}
                 </div>

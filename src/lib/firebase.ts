@@ -42,12 +42,24 @@ import type {
 } from '../types/explore';
 
 /** Connection request stored in Firestore */
+export interface SharedPostRef {
+  postId: string;
+  url?: string;
+  caption?: string;
+  imageUrl?: string;
+  authorName?: string;
+  authorId?: string;
+}
+
 export interface ConnectionRequest {
   id: string;
   senderId: string;
   recipientId: string;
   message: string;
   status: 'pending' | 'accepted' | 'declined' | 'collaborating' | 'completed';
+  /** Instagram-style: share/message without prior acceptance */
+  kind?: 'connection' | 'message_request' | 'post_share';
+  sharedPost?: SharedPostRef;
   collaborateRequestedBy?: string[];
   feedbackGivenBy?: string[];
   createdAt: string;
@@ -606,7 +618,7 @@ export async function fetchExploreFeedFromFirestore(params?: {
         discoveryReason: publicU.primaryRole
           ? `Active ${publicU.primaryRole}${publicU.location ? ` · ${publicU.location}` : ''}`
           : 'Creator on Afflatus',
-        relevanceScore: publicU.profileCompleted ? 70 : 40,
+        relevanceScore: publicU.profileCompleted ? 0.7 : 0.4,
       };
     });
 
@@ -658,6 +670,8 @@ export async function createConnectionRequest(params: {
   message: string;
   projectId?: string;
   taskId?: string;
+  kind?: 'connection' | 'message_request' | 'post_share';
+  sharedPost?: SharedPostRef;
 }): Promise<{ connection: ConnectionRequest; alreadyExists: boolean }> {
   const current = auth.currentUser;
   if (!current) {
@@ -675,6 +689,20 @@ export async function createConnectionRequest(params: {
     throw new Error('You cannot connect with yourself.');
   }
   params = { ...params, senderId };
+
+  // Profile-completion gate (cannot be bypassed by calling this helper directly)
+  try {
+    const senderSnap = await getDoc(doc(db, 'users', senderId));
+    const senderData = senderSnap.exists() ? senderSnap.data() : null;
+    if (!senderData?.profileCompleted) {
+      throw new Error(
+        'Complete your profile before sending collaboration proposals. Add your roles, location, and required details in Profile Setup.'
+      );
+    }
+  } catch (e: any) {
+    if (e?.message?.includes('Complete your profile')) throw e;
+    console.warn('[createConnectionRequest] profile check failed:', e?.message || e);
+  }
 
   // Duplicate check
   const senderDocs = await getDocs(query(collection(db, 'connections'), where('senderId', '==', senderId)));
@@ -701,6 +729,8 @@ export async function createConnectionRequest(params: {
   // Firestore rejects `undefined` field values — only include optional fields when set
   if (params.projectId) connection.projectId = params.projectId;
   if (params.taskId) connection.taskId = params.taskId;
+  if (params.kind) connection.kind = params.kind;
+  if (params.sharedPost) connection.sharedPost = params.sharedPost;
 
   const payload: Record<string, unknown> = {
     id: connection.id,
@@ -713,6 +743,8 @@ export async function createConnectionRequest(params: {
   };
   if (connection.projectId) payload.projectId = connection.projectId;
   if (connection.taskId) payload.taskId = connection.taskId;
+  if (connection.kind) payload.kind = connection.kind;
+  if (connection.sharedPost) payload.sharedPost = connection.sharedPost;
 
   await setDoc(doc(db, 'connections', id), payload);
 
@@ -720,8 +752,12 @@ export async function createConnectionRequest(params: {
     await createNotification({
       userId: params.recipientId,
       type: 'connection_request',
-      title: 'New connection request',
-      body: params.message?.slice(0, 120) || 'Someone wants to connect with you.',
+      title: params.kind === 'post_share' || params.kind === 'message_request'
+        ? 'Message request'
+        : 'New connection request',
+      body: params.kind === 'post_share'
+        ? (params.message?.slice(0, 120) || 'Shared a post with you')
+        : (params.message?.slice(0, 120) || 'Someone wants to connect with you.'),
       relatedId: id,
       fromUserId: params.senderId,
     });
@@ -886,15 +922,56 @@ export async function saveProjectToFirestore(project: Project & { seekerId: stri
 /**
  * Create or update a work showcase owned by the current user.
  */
+
+/** Works owned by a creator (persistent source for profile counts/list). */
+export async function getUserWorksFromFirestore(creatorId: string): Promise<WorkShowcase[]> {
+  if (!creatorId) return [];
+  try {
+    const snap = await getDocs(query(collection(db, 'works'), where('creatorId', '==', creatorId)));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as WorkShowcase));
+  } catch (e) {
+    console.warn('[Firestore] getUserWorksFromFirestore failed', e);
+    return [];
+  }
+}
+
 export async function saveWorkToFirestore(work: WorkShowcase): Promise<WorkShowcase> {
   const current = auth.currentUser;
   if (!current || current.uid !== work.creatorId) {
     throw new Error('You can only create or edit your own work showcases.');
   }
   const id = work.id || `work_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const isNew = !work.id;
   const payload = { ...work, id, updatedAt: serverTimestamp() };
   await setDoc(doc(db, 'works', id), payload, { merge: true });
+  if (isNew) {
+    try {
+      const userRef = doc(db, 'users', work.creatorId);
+      const snap = await getDoc(userRef);
+      const prev = snap.exists() ? Number((snap.data() as any)?.worksCount) || 0 : 0;
+      await setDoc(userRef, { worksCount: prev + 1, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (e) {
+      console.warn('[works] worksCount increment failed', e);
+    }
+  }
   return { ...work, id };
+}
+
+/** Delete a work showcase and decrement worksCount on the user profile. */
+export async function deleteWorkFromFirestore(workId: string, creatorId: string): Promise<void> {
+  const current = auth.currentUser;
+  if (!current || current.uid !== creatorId) {
+    throw new Error('You can only delete your own work showcases.');
+  }
+  await deleteDoc(doc(db, 'works', workId));
+  try {
+    const userRef = doc(db, 'users', creatorId);
+    const snap = await getDoc(userRef);
+    const prev = snap.exists() ? Number((snap.data() as any)?.worksCount) || 0 : 0;
+    await setDoc(userRef, { worksCount: Math.max(0, prev - 1), updatedAt: serverTimestamp() }, { merge: true });
+  } catch (e) {
+    console.warn('[works] worksCount decrement failed', e);
+  }
 }
 
 /**
@@ -1083,27 +1160,23 @@ export function subscribeToNotifications(
   onChange: (items: AppNotification[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  // Avoid composite index requirement: filter only, sort client-side
   const q = query(
     collection(db, 'notifications'),
     where('userId', '==', userId),
-    orderBy('createdAt', 'desc'),
     limit(50)
   );
   return onSnapshot(
     q,
     (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() } as AppNotification));
+      const items = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as AppNotification))
+        .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       onChange(items);
     },
     (err) => {
       console.warn('[Firestore] notifications subscription error:', err);
-      const q2 = query(collection(db, 'notifications'), where('userId', '==', userId), limit(50));
-      return onSnapshot(q2, (snap) => {
-        const items = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() } as AppNotification))
-          .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-        onChange(items);
-      }, (e2) => onError?.(e2 as Error));
+      onError?.(err as Error);
     }
   );
 }
@@ -1181,5 +1254,268 @@ export async function deleteAccountAndData(): Promise<void> {
   }
 }
 
+
+
+/** ---------- AI Match conversation persistence (per-user) ---------- */
+export interface AiMatchStoredMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  results?: unknown[];
+  requirements?: unknown;
+  createdAt?: string;
+}
+
+export interface AiMatchConversationMeta {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount?: number;
+}
+
+function aiMatchConvCol(userId: string) {
+  return collection(db, 'users', userId, 'aiMatchConversations');
+}
+
+export async function listAiMatchConversations(userId: string): Promise<AiMatchConversationMeta[]> {
+  const current = auth.currentUser;
+  if (!current) return [];
+  // Always scope to Auth UID (rules require request.auth.uid == userId)
+  const uid = current.uid;
+  try {
+    const snap = await getDocs(query(aiMatchConvCol(uid), orderBy('updatedAt', 'desc')));
+    return snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        title: data.title || 'Conversation',
+        createdAt: data.createdAt || '',
+        updatedAt: data.updatedAt || '',
+        messageCount: Array.isArray(data.messages) ? data.messages.length : data.messageCount,
+      };
+    });
+  } catch (err: any) {
+    // Fallback without orderBy (missing index)
+    try {
+      const snap2 = await getDocs(aiMatchConvCol(uid));
+      return snap2.docs
+        .map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            title: data.title || 'Conversation',
+            createdAt: data.createdAt || '',
+            updatedAt: data.updatedAt || '',
+            messageCount: Array.isArray(data.messages) ? data.messages.length : data.messageCount,
+          };
+        })
+        .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    } catch (err2: any) {
+      console.warn('[AI Match] list conversations:', err2?.message || err?.message || err);
+      return [];
+    }
+  }
+}
+
+export async function createAiMatchConversation(userId: string, title?: string): Promise<AiMatchConversationMeta> {
+  const current = auth.currentUser;
+  if (!current) throw new Error('Not signed in');
+  const uid = current.uid;
+  const id = `aim_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const now = new Date().toISOString();
+  const meta = { title: title || 'New conversation', createdAt: now, updatedAt: now, messages: [] as AiMatchStoredMessage[] };
+  await setDoc(doc(db, 'users', uid, 'aiMatchConversations', id), meta);
+  return { id, title: meta.title, createdAt: now, updatedAt: now, messageCount: 0 };
+}
+
+export async function getAiMatchConversation(
+  userId: string,
+  conversationId: string
+): Promise<{ id: string; title: string; messages: AiMatchStoredMessage[] } | null> {
+  const current = auth.currentUser;
+  if (!current) return null;
+  const uid = current.uid;
+  const snap = await getDoc(doc(db, 'users', uid, 'aiMatchConversations', conversationId));
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  return {
+    id: snap.id,
+    title: data.title || 'Conversation',
+    messages: Array.isArray(data.messages) ? data.messages : [],
+    sessionLocation: data.sessionLocation || null,
+  };
+}
+
+export async function saveAiMatchConversation(
+  userId: string,
+  conversationId: string,
+  messages: AiMatchStoredMessage[],
+  title?: string,
+  sessionLocation?: string | null
+): Promise<void> {
+  const current = auth.currentUser;
+  if (!current) return;
+  const uid = current.uid;
+  const now = new Date().toISOString();
+  const derivedTitle =
+    title ||
+    messages.find((m) => m.role === 'user')?.content?.slice(0, 48) ||
+    'Conversation';
+  const stripUndef = (obj: any): any => {
+    if (obj === null || obj === undefined) return null;
+    if (Array.isArray(obj)) return obj.map(stripUndef).filter((x) => x !== undefined);
+    if (typeof obj === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (v === undefined) continue;
+        out[k] = stripUndef(v);
+      }
+      return out;
+    }
+    return obj;
+  };
+
+  const payload: Record<string, unknown> = {
+    title: derivedTitle.length >= 48 ? derivedTitle + '…' : derivedTitle,
+    updatedAt: now,
+    messageCount: messages.length,
+    messages: messages.map((m) => {
+      const entry: Record<string, unknown> = {
+        role: m.role,
+        content: m.content || '',
+        createdAt: m.createdAt || now,
+      };
+      if (Array.isArray(m.results) && m.results.length) {
+        entry.results = m.results.slice(0, 10).map((r: any) =>
+          stripUndef({
+            id: r?.id || '',
+            name: r?.name || '',
+            primaryRole: r?.primaryRole || '',
+            secondaryRoles: Array.isArray(r?.secondaryRoles) ? r.secondaryRoles : [],
+            relevanceScore: typeof r?.relevanceScore === 'number' ? r.relevanceScore : 0,
+            discoveryReason: r?.discoveryReason || '',
+            avatarUrl: r?.avatarUrl || '',
+            location: r?.location || '',
+          })
+        );
+      }
+      if (m.requirements != null) {
+        entry.requirements = stripUndef(m.requirements);
+      }
+      return entry;
+    }),
+  };
+  if (sessionLocation) {
+    payload.sessionLocation = sessionLocation;
+  }
+  await setDoc(
+    doc(db, 'users', uid, 'aiMatchConversations', conversationId),
+    stripUndef(payload),
+    { merge: true }
+  );
+}
+
+/** Overall rating 1–5 from collaborationProfile traits; null if no feedback */
+export function computeOverallRating(profile: {
+  collaborationProfile?: Record<string, number> | null;
+}): { rating: number; reviewCount: number } | null {
+  const cp = profile?.collaborationProfile;
+  if (!cp) return null;
+  const count = Number(cp.feedbackCount) || 0;
+  if (count <= 0) return null;
+  const traitKeys = [
+    'reliability',
+    'communication',
+    'teamwork',
+    'creativity',
+    'flexibility',
+    'feedback_openness',
+    'leadership',
+    'technical_proficiency',
+  ];
+  const vals = traitKeys.map((k) => Number(cp[k])).filter((n) => !Number.isNaN(n) && n > 0);
+  if (!vals.length) return null;
+  // traits stored 0–10 → display 1–5 stars
+  const avg10 = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const rating = Math.round((avg10 / 2) * 10) / 10; // one decimal
+  return { rating: Math.min(5, Math.max(1, rating)), reviewCount: count };
+}
+
+/** Share post payload for messenger (in-app) */
+export function buildPostShareText(post: { id: string; caption?: string; authorName?: string }): string {
+  const base = typeof window !== 'undefined' ? window.location.origin : '';
+  const link = `${base}/?post=${encodeURIComponent(post.id)}`;
+  const cap = (post.caption || '').slice(0, 120);
+  return `Shared a post${post.authorName ? ` by ${post.authorName}` : ''}${cap ? `: "${cap}"` : ''}\n${link}`;
+}
+
+export function getPostShareUrl(postId: string): string {
+  const base = typeof window !== 'undefined' ? window.location.origin : '';
+  return `${base}/?post=${encodeURIComponent(postId)}`;
+}
+
+
+/** Lightweight creator search for Share to Afflatus (name/username/role). */
+export async function searchCreatorsByName(queryText: string, limitCount = 20): Promise<CreatorProfile[]> {
+  const q = (queryText || '').trim().toLowerCase();
+  if (!q || q.length < 1) return [];
+  try {
+    const snap = await getDocs(query(collection(db, 'users'), limit(80)));
+    const all = snap.docs.map((d) => ({ id: d.id, ...d.data() } as CreatorProfile));
+    return all
+      .filter((u) => {
+        const blob = `${u.name || ''} ${u.username || ''} ${u.primaryRole || ''}`.toLowerCase();
+        return blob.includes(q);
+      })
+      .slice(0, limitCount);
+  } catch (err: any) {
+    console.warn('[searchCreatorsByName]', err?.message || err);
+    return [];
+  }
+}
+
+/** Find existing connection between two users (any status). */
+export async function findConnectionBetween(userA: string, userB: string): Promise<ConnectionRequest | null> {
+  try {
+    const list = await getConnectionsForUser(userA);
+    return (
+      list.find(
+        (c) =>
+          (c.senderId === userA && c.recipientId === userB) ||
+          (c.senderId === userB && c.recipientId === userA)
+      ) || null
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** Re-export auth state listener for session restore */
 export { onAuthStateChanged };
+
+
+export async function renameAiMatchConversation(
+  userId: string,
+  conversationId: string,
+  title: string
+): Promise<void> {
+  const current = auth.currentUser;
+  if (!current) throw new Error('Not signed in');
+  const uid = current.uid;
+  const clean = (title || '').trim().slice(0, 80) || 'Conversation';
+  await setDoc(
+    doc(db, 'users', uid, 'aiMatchConversations', conversationId),
+    { title: clean, updatedAt: new Date().toISOString() },
+    { merge: true }
+  );
+}
+
+export async function deleteAiMatchConversation(
+  userId: string,
+  conversationId: string
+): Promise<void> {
+  const current = auth.currentUser;
+  if (!current) throw new Error('Not signed in');
+  const uid = current.uid;
+  await deleteDoc(doc(db, 'users', uid, 'aiMatchConversations', conversationId));
+}

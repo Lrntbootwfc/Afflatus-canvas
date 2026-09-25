@@ -110,8 +110,22 @@ export const affilApi = {
 
   // Temporary Chat
   getTemporaryChat: (connectionId: string) => client.get(`/temporary-chat/${connectionId}`).then((r) => r.data),
-  sendTemporaryChat: (connectionId: string, recipientId: string, text: string) => 
-    client.post(`/temporary-chat/${connectionId}`, { recipientId, text }).then((r) => r.data),
+  sendTemporaryChat: (
+    connectionId: string,
+    recipientId: string,
+    text: string,
+    sharedPost?: {
+      postId: string;
+      url?: string;
+      caption?: string;
+      imageUrl?: string;
+      authorName?: string;
+      authorId?: string;
+    }
+  ) =>
+    client
+      .post(`/temporary-chat/${connectionId}`, { recipientId, text, sharedPost })
+      .then((r) => r.data),
   markTemporaryChatRead: (connectionId: string) => 
     client.post(`/temporary-chat/${connectionId}/read`).then((r) => r.data),
 
@@ -128,9 +142,12 @@ export const affilApi = {
   createPost: (body: { authorId: string; authorName: string; authorRole: string; authorAvatar?: string; caption: string; imageUrl?: string }) =>
     client.post('/posts', body).then((r) => r.data),
   getGlobalFeed: () => client.get('/posts').then((r) => r.data),
+  getPost: (postId: string) => client.get(`/posts/${postId}`).then((r) => r.data),
   getUserPosts: (userId: string) => client.get(`/posts/user/${userId}`).then((r) => r.data),
   toggleLike: (postId: string, userId: string) => client.post(`/posts/${postId}/like`, { userId }).then((r) => r.data),
   deletePost: (postId: string) => client.delete(`/posts/${postId}`).then((r) => r.data),
+  updatePost: (postId: string, body: { userId: string; caption?: string; imageUrl?: string }) =>
+    client.put(`/posts/${postId}`, body).then((r) => r.data),
 };
 
 export default affilApi;

@@ -28,6 +28,7 @@ import {
 import type { CreatorProfile, WorkLink, SocialLinks, PortfolioItem } from '../types';
 import { UserAvatar } from './UserAvatar';
 import { ImagePickerModal } from './ImagePickerModal';
+import { MultiRoleSelect } from './MultiRoleSelect';
 import {
   ROLE_CATEGORIES,
   ALL_ROLES,
@@ -55,7 +56,15 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
   const [email, setEmail] = useState(initialProfile.email || '');
   const [avatarUrl, setAvatarUrl] = useState(initialProfile.avatarUrl || '');
   const [coverImageUrl, setCoverImageUrl] = useState(initialProfile.coverImageUrl || '');
-  const [primaryRole, setPrimaryRole] = useState(initialProfile.primaryRole || '');
+  const [offeredRoles, setOfferedRoles] = useState<string[]>(() => {
+    const fromSecondary = initialProfile.secondaryRoles || [];
+    const primary = initialProfile.primaryRole ? [initialProfile.primaryRole] : [];
+    return Array.from(new Set([...primary, ...fromSecondary].filter(Boolean)));
+  });
+  const [seekingRoles, setSeekingRoles] = useState<string[]>(initialProfile.seekingRoles || []);
+  const [travelPreference, setTravelPreference] = useState<string>(
+    (initialProfile as any).travelPreference || 'within_city'
+  );
   const [location, setLocation] = useState(initialProfile.location || '');
   const [bio, setBio] = useState(initialProfile.bio || '');
   const [yearsActive, setYearsActive] = useState(initialProfile.experience?.yearsActive || 0);
@@ -64,11 +73,11 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
   
   const [portfolios, setPortfolios] = useState<PortfolioItem[]>(initialProfile.portfolios || []);
 
-  const [scenarioQ1, setScenarioQ1] = useState('');
-  const [scenarioQ2, setScenarioQ2] = useState('');
-  const [scenarioQ3, setScenarioQ3] = useState('');
-  const [scenarioQ4, setScenarioQ4] = useState('');
-  const [scenarioQ5, setScenarioQ5] = useState('');
+  const [scenarioQ1, setScenarioQ1] = useState((initialProfile as any).collaborationScenarios?.q1 || '');
+  const [scenarioQ2, setScenarioQ2] = useState((initialProfile as any).collaborationScenarios?.q2 || '');
+  const [scenarioQ3, setScenarioQ3] = useState((initialProfile as any).collaborationScenarios?.q3 || '');
+  const [scenarioQ4, setScenarioQ4] = useState((initialProfile as any).collaborationScenarios?.q4 || '');
+  const [scenarioQ5, setScenarioQ5] = useState((initialProfile as any).collaborationScenarios?.q5 || '');
 
   // Work links — empty until user adds (no demo YouTube/Behance)
   const [workLinks, setWorkLinks] = useState<WorkLink[]>(
@@ -96,7 +105,17 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
     setEmail(initialProfile.email || '');
     setAvatarUrl(initialProfile.avatarUrl || '');
     setCoverImageUrl(initialProfile.coverImageUrl || '');
-    setPrimaryRole(initialProfile.primaryRole || '');
+    const fromSecondary = initialProfile.secondaryRoles || [];
+    const primary = initialProfile.primaryRole ? [initialProfile.primaryRole] : [];
+    setOfferedRoles(Array.from(new Set([...primary, ...fromSecondary].filter(Boolean))));
+    setSeekingRoles(initialProfile.seekingRoles || []);
+    setTravelPreference((initialProfile as any).travelPreference || 'within_city');
+    const sc = (initialProfile as any).collaborationScenarios || {};
+    setScenarioQ1(sc.q1 || '');
+    setScenarioQ2(sc.q2 || '');
+    setScenarioQ3(sc.q3 || '');
+    setScenarioQ4(sc.q4 || '');
+    setScenarioQ5(sc.q5 || '');
     setLocation(initialProfile.location || '');
     setBio(initialProfile.bio || '');
     setYearsActive(initialProfile.experience?.yearsActive || 0);
@@ -241,6 +260,11 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
       }
     }
 
+    if (!offeredRoles.length) {
+      setSaveError('Select at least one role you offer.');
+      return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -265,7 +289,17 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
         username: username.toLowerCase().replace(/[^a-z0-9_]/g, ''),
         name: fullName.trim(),
         email: email.trim(),
-        primaryRole,
+        primaryRole: offeredRoles[0] || '',
+        secondaryRoles: offeredRoles.slice(1),
+        seekingRoles,
+        travelPreference,
+        collaborationScenarios: {
+          q1: scenarioQ1,
+          q2: scenarioQ2,
+          q3: scenarioQ3,
+          q4: scenarioQ4,
+          q5: scenarioQ5,
+        },
         location: locCheck.normalized,
         bio,
         experience: {
@@ -433,7 +467,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                     )}
                   </div>
                   <p className="text-xs text-[var(--accent-amber)] font-medium">
-                    {primaryRole || 'Cinematographer'}
+                    {offeredRoles[0] || 'Creator'}
                   </p>
                   <p className="text-[11px] text-[var(--text-muted)] flex items-center gap-1 font-mono">
                     <MapPin className="w-3 h-3 text-[var(--accent-amber)]" /> {location || 'Location not set'}
@@ -518,31 +552,25 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
               </div>
             </div>
 
-            {/* Expanded Categorized Primary Role */}
-            <div>
-              <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
-                Primary Offering Role *
-              </label>
-              <div className="relative">
-                <Briefcase className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-3 pointer-events-none" />
-                <select
-                  id="profile-role-select"
-                  value={primaryRole}
-                  onChange={(e) => setPrimaryRole(e.target.value)}
-                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-10 pr-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
-                >
-                  {ROLE_CATEGORIES.map((cat) => (
-                    <optgroup key={cat.category} label={`── ${cat.category} ──`}>
-                      {cat.roles.map((role) => (
-                        <option key={role} value={role}>
-                          {role}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </div>
-            </div>
+            {/* Roles you offer — multi-select */}
+            <MultiRoleSelect
+              id="profile-roles-offered"
+              label="What roles do you offer?"
+              hint="Select every role you can take on a production. First selected is treated as your primary role."
+              selected={offeredRoles}
+              onChange={setOfferedRoles}
+              required
+            />
+
+            {/* Roles you seek — multi-select */}
+            <MultiRoleSelect
+              id="profile-roles-seeking"
+              label="Who are you seeking?"
+              hint="People you usually need on a project. Used to personalize discovery."
+              selected={seekingRoles}
+              onChange={setSeekingRoles}
+            />
+
 
             {/* Base Location with Validation */}
             <div>
@@ -637,12 +665,31 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
               </div>
             </div>
 
-            {/* Collaboration Scenarios */}
-            {!initialProfile.profileCompleted && (
+            {/* Collaboration Scenarios + Travel (behaviour + mobility) */}
+            {true && (
             <div className="col-span-1 sm:col-span-2 space-y-4 pt-4 border-t border-[var(--card-border)]">
               <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider">
                 Collaboration Scenarios
               </label>
+
+              <div>
+                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">
+                  Can you travel for work?
+                </label>
+                <select
+                  id="profile-travel-preference"
+                  value={travelPreference}
+                  onChange={(e) => setTravelPreference(e.target.value)}
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
+                >
+                  <option value="remote_only">Remote only</option>
+                  <option value="within_city">Within my city</option>
+                  <option value="nearby_cities">Nearby cities</option>
+                  <option value="nearby_metro">Nearby metro cities</option>
+                  <option value="nearby_states">Nearby states</option>
+                  <option value="anywhere">Anywhere</option>
+                </select>
+              </div>
               
               <div>
                 <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1.5">

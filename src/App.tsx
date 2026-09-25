@@ -25,6 +25,7 @@ import {
   updateProfileInFirestore,
 } from './lib/firebase';
 import { setAuth } from './lib/affilApi';
+import affilApi from './lib/affilApi';
 
 export default function App() {
   // Screen Router: 'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore'
@@ -39,6 +40,11 @@ export default function App() {
   const [isAssistantOpen, setIsAssistantOpen] = useState<boolean>(false);
   const [isMessengerOpen, setIsMessengerOpen] = useState<boolean>(false);
   const [messengerConnectionId, setMessengerConnectionId] = useState<string | null>(null);
+  const [deepLinkPostId, setDeepLinkPostId] = useState<string | null>(null);
+  const [deepLinkPost, setDeepLinkPost] = useState<any>(null);
+  const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
+  const [deepLinkLoading, setDeepLinkLoading] = useState(false);
+
 
   // Cross-screen navigation params (e.g. from C1 Copilot to Explore)
   const [exploreNavParams, setExploreNavParams] = useState<{
@@ -93,6 +99,67 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Public post deep link: /?post=POST_ID
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const postId = params.get('post');
+      if (postId) {
+        setDeepLinkPostId(postId);
+        // Preserve post id across auth in sessionStorage
+        sessionStorage.setItem('afflatus_pending_post', postId);
+      } else {
+        const pending = sessionStorage.getItem('afflatus_pending_post');
+        if (pending) setDeepLinkPostId(pending);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!deepLinkPostId) return;
+    let cancelled = false;
+    (async () => {
+      setDeepLinkLoading(true);
+      setDeepLinkError(null);
+      setDeepLinkPost(null);
+      try {
+        const res = await affilApi.getPost(deepLinkPostId);
+        if (cancelled) return;
+        if (res?.post) {
+          setDeepLinkPost(res.post);
+          sessionStorage.removeItem('afflatus_pending_post');
+        } else {
+          setDeepLinkError('Post not found or no longer available.');
+          sessionStorage.removeItem('afflatus_pending_post');
+        }
+      } catch (err: any) {
+        if (cancelled) return;
+        const msg = err?.response?.status === 404
+          ? 'This post was deleted or does not exist.'
+          : (err?.message || 'Could not load this post.');
+        setDeepLinkError(msg);
+        sessionStorage.removeItem('afflatus_pending_post');
+      } finally {
+        if (!cancelled) setDeepLinkLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [deepLinkPostId]);
+
+  const closeDeepLinkPost = () => {
+    setDeepLinkPostId(null);
+    setDeepLinkPost(null);
+    setDeepLinkError(null);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('post');
+      window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+    } catch { /* ignore */ }
+  };
+
+
   // Keep Main Backend auth header in sync
   useEffect(() => {
     if (!currentUser?.id) {
@@ -144,6 +211,7 @@ export default function App() {
           ...(saved.secondaryRoles || []),
         ].filter(Boolean),
         seekingRoles: saved.seekingRoles,
+        travelPreference: (saved as any).travelPreference,
         profileCompleted: true,
       });
     } catch (err) {
@@ -252,13 +320,25 @@ export default function App() {
             currentUser={currentUser}
             onEditProfile={() => setCurrentScreen('onboarding')}
             onUpdateCurrentUser={handleProfileSaved}
-            onNavigateToExplore={() => setCurrentScreen('explore')}
+            onNavigateToExplore={(tab, category, search, entity) => {
+              setExploreNavParams({
+                tab: tab || 'creators',
+                category,
+                search,
+                entity: entity || null,
+              });
+              setCurrentScreen('explore');
+            }}
           />
         )}
 
         {/* Screen 5: EXPLORE CORE (Dedicated work, project, task, and guild discovery) */}
         {currentScreen === 'explore' && (
           <ExploreScreen
+            onOpenMessenger={(connectionId) => {
+              setMessengerConnectionId(connectionId || null);
+              setIsMessengerOpen(true);
+            }}
             currentUser={currentUser}
             onNavigateToOnboarding={() => {
               if (currentUser) {
@@ -323,6 +403,41 @@ export default function App() {
         isOpen={isThemesOpen}
         onClose={() => setIsThemesOpen(false)}
       />
+
+      {/* Public / shared post deep link modal — works logged-in or out */}
+      {deepLinkPostId && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={closeDeepLinkPost} />
+          <div className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-editorial text-lg font-bold text-[var(--text-primary)]">Shared Post</h3>
+              <button type="button" onClick={closeDeepLinkPost} className="text-xs font-bold text-[var(--text-muted)] hover:text-[var(--text-primary)]">Close</button>
+            </div>
+            {deepLinkLoading && (
+              <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--text-muted)]" /></div>
+            )}
+            {deepLinkError && (
+              <p className="text-sm text-red-500 py-8 text-center">{deepLinkError}</p>
+            )}
+            {deepLinkPost && !deepLinkLoading && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-[var(--text-primary)]">{deepLinkPost.authorName || 'Creator'}</p>
+                    <p className="text-[10px] text-[var(--text-muted)]">{deepLinkPost.authorRole || ''}</p>
+                  </div>
+                </div>
+                {deepLinkPost.caption && (
+                  <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap">{deepLinkPost.caption}</p>
+                )}
+                {deepLinkPost.imageUrl && (
+                  <img src={deepLinkPost.imageUrl} alt="" className="w-full rounded-2xl border border-[var(--card-border)] max-h-96 object-contain bg-[var(--app-bg)]" />
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Messenger (post-connection real-time chat) */}
       {currentUser && (

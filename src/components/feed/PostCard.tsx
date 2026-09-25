@@ -2,18 +2,35 @@ import React, { useState } from 'react';
 import { Heart, MessageCircle, Share2, MoreHorizontal } from 'lucide-react';
 import { Post } from '../../types';
 import affilApi from '../../lib/affilApi';
+import { getPostShareUrl, buildPostShareText, getProfileFromFirestore } from '../../lib/firebase';
+import { ShareToAfflatusModal } from './ShareToAfflatusModal';
+import type { CreatorProfile } from '../../types';
+
 
 interface PostCardProps {
   post: Post;
   currentUserId: string;
+  onDeleted?: () => void;
+  currentUser?: CreatorProfile | null;
+  onOpenMessenger?: (connectionId: string) => void;
+  onOpenPost?: (postId: string) => void;
 }
 
-export const PostCard: React.FC<PostCardProps> = ({ post, currentUserId }) => {
+export const PostCard: React.FC<PostCardProps> = ({ post, currentUserId, currentUser, onOpenMessenger, onOpenPost, onDeleted }) => {
   const [likes, setLikes] = useState<string[]>(post.likes || []);
   const [isLiking, setIsLiking] = useState(false);
 
   const [showMenu, setShowMenu] = useState(false);
   const [isDeleted, setIsDeleted] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editCaption, setEditCaption] = useState(post.caption || '');
+  const [displayCaption, setDisplayCaption] = useState(post.caption || '');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const [shareToAfflatusOpen, setShareToAfflatusOpen] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [shareProfile, setShareProfile] = useState<CreatorProfile | null>(currentUser || null);
+
   const isAuthor = currentUserId === post.authorId;
   const hasLiked = likes.includes(currentUserId);
 
@@ -45,14 +62,75 @@ export const PostCard: React.FC<PostCardProps> = ({ post, currentUserId }) => {
     }
   };
 
+  const openShareMenu = () => setShareMenuOpen((v) => !v);
+
+  const handleCopyLink = async () => {
+    const url = getPostShareUrl(post.id);
+    try {
+      await navigator.clipboard.writeText(url);
+      alert('Link copied');
+    } catch {
+      prompt('Copy this post link:', url);
+    }
+    setShareMenuOpen(false);
+  };
+
+  const handleExternalShare = async () => {
+    const url = getPostShareUrl(post.id);
+    try {
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        await navigator.share({ title: 'Afflatus post', text: post.caption || 'Check this post on Afflatus', url });
+      } else {
+        await handleCopyLink();
+      }
+    } catch {
+      /* cancelled */
+    }
+    setShareMenuOpen(false);
+  };
+
+  const handleShareToAfflatus = async () => {
+    setShareMenuOpen(false);
+    if (!currentUserId) {
+      alert('Sign in to share to Afflatus');
+      return;
+    }
+    let profile = shareProfile || currentUser || null;
+    if (!profile) {
+      profile = await getProfileFromFirestore(currentUserId);
+      setShareProfile(profile);
+    }
+    if (!profile) {
+      alert('Could not load your profile');
+      return;
+    }
+    setShareToAfflatusOpen(true);
+  };
+
   const handleDelete = async () => {
     if (!window.confirm('Are you sure you want to delete this post?')) return;
     try {
       await affilApi.deletePost(post.id);
       setIsDeleted(true);
+      onDeleted?.();
     } catch (err) {
       console.error('Failed to delete post:', err);
       alert('Failed to delete post.');
+    }
+  };
+
+  const handleSaveEdit = async () => {
+    if (!currentUserId || !isAuthor) return;
+    setIsSavingEdit(true);
+    try {
+      await affilApi.updatePost(post.id, { userId: currentUserId, caption: editCaption });
+      setDisplayCaption(editCaption);
+      setIsEditing(false);
+    } catch (err) {
+      console.error('Failed to edit post:', err);
+      alert('Failed to save edit.');
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -93,8 +171,16 @@ export const PostCard: React.FC<PostCardProps> = ({ post, currentUserId }) => {
             </button>
             
             {showMenu && (
-              <div className="absolute right-0 mt-1 w-32 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl shadow-lg z-10 overflow-hidden">
-                <button 
+              <div className="absolute right-0 mt-1 w-36 bg-[var(--card-bg)] border border-[var(--card-border)] rounded-xl shadow-lg z-10 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => { setIsEditing(true); setShowMenu(false); }}
+                  className="w-full text-left px-4 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)] transition-colors"
+                >
+                  Edit Post
+                </button>
+                <button
+                  type="button"
                   onClick={handleDelete}
                   className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-[var(--card-inner-bg)] transition-colors"
                 >
@@ -108,13 +194,52 @@ export const PostCard: React.FC<PostCardProps> = ({ post, currentUserId }) => {
 
       {/* Content */}
       <div className="mb-4">
-        <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap">{post.caption}</p>
+        {isEditing ? (
+          <div className="space-y-2">
+            <textarea
+              value={editCaption}
+              onChange={(e) => setEditCaption(e.target.value)}
+              className="w-full text-sm bg-[var(--input-bg)] border border-[var(--input-border)] rounded-xl p-2 text-[var(--text-primary)]"
+              rows={3}
+            />
+            <div className="flex gap-2">
+              <button type="button" disabled={isSavingEdit} onClick={handleSaveEdit} className="text-xs font-bold px-3 py-1 rounded-full bg-[var(--accent-amber)]">Save</button>
+              <button type="button" onClick={() => { setIsEditing(false); setEditCaption(displayCaption); }} className="text-xs font-bold px-3 py-1 rounded-full border border-[var(--card-border)]">Cancel</button>
+            </div>
+          </div>
+        ) : displayCaption ? (
+          <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap">{displayCaption}</p>
+        ) : null}
       </div>
 
       {/* Image (if any) */}
       {post.imageUrl && (
-        <div className="mb-4 rounded-2xl overflow-hidden border border-[var(--card-border)] max-h-96 bg-[var(--app-bg)] flex items-center justify-center">
+        <button
+          type="button"
+          onClick={() => setLightboxOpen(true)}
+          className="mb-4 w-full rounded-2xl overflow-hidden border border-[var(--card-border)] max-h-96 bg-[var(--app-bg)] flex items-center justify-center cursor-zoom-in"
+        >
           <img src={post.imageUrl} alt="Post content" className="w-full h-auto object-contain max-h-96" />
+        </button>
+      )}
+      {lightboxOpen && post.imageUrl && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/80"
+          onClick={() => setLightboxOpen(false)}
+        >
+          <button
+            type="button"
+            className="absolute top-4 right-4 text-white text-sm font-bold px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20"
+            onClick={() => setLightboxOpen(false)}
+          >
+            Close
+          </button>
+          <img
+            src={post.imageUrl}
+            alt="Expanded post"
+            className="max-w-full max-h-[90vh] object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
 
@@ -131,8 +256,40 @@ export const PostCard: React.FC<PostCardProps> = ({ post, currentUserId }) => {
             <Heart size={18} className={hasLiked ? 'fill-current' : ''} />
             <span>{likes.length}</span>
           </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={openShareMenu}
+              className="flex items-center space-x-2 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+              aria-label="Share post"
+            >
+              <Share2 size={18} />
+              <span>Share</span>
+            </button>
+            {shareMenuOpen && (
+              <div className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-xl z-20 overflow-hidden">
+                <button type="button" onClick={handleShareToAfflatus} className="w-full text-left px-3 py-2.5 text-xs hover:bg-[var(--card-inner-bg)] text-[var(--text-primary)]">
+                  Share to Afflatus
+                </button>
+                <button type="button" onClick={handleCopyLink} className="w-full text-left px-3 py-2.5 text-xs hover:bg-[var(--card-inner-bg)] text-[var(--text-primary)]">
+                  Copy link
+                </button>
+                <button type="button" onClick={handleExternalShare} className="w-full text-left px-3 py-2.5 text-xs hover:bg-[var(--card-inner-bg)] text-[var(--text-primary)]">
+                  Share externally
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+      {shareToAfflatusOpen && shareProfile && (
+        <ShareToAfflatusModal
+          post={post}
+          currentUser={shareProfile}
+          onClose={() => setShareToAfflatusOpen(false)}
+          onOpenMessenger={onOpenMessenger}
+        />
+      )}
     </div>
   );
 };

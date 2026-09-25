@@ -80,6 +80,21 @@ export interface CreatorProfile {
   secondaryRoles: string[];
   /** @deprecated User needs are now handled conversationally via AI Match */
   seekingRoles?: string[];
+  /** Roles the user offers (multi). primaryRole remains first/primary for compatibility. */
+  rolesOffered?: string[];
+  /**
+   * Travel preference for matching:
+   * remote_only | within_city | nearby_cities | nearby_metro | nearby_states | anywhere
+   */
+  travelPreference?: string;
+  /** Raw onboarding scenario answers (behaviour input for recommendations) */
+  collaborationScenarios?: {
+    q1?: string;
+    q2?: string;
+    q3?: string;
+    q4?: string;
+    q5?: string;
+  };
   location: string;
   travelRadiusMiles: number;
   dayRateUsd: number;
@@ -92,6 +107,9 @@ export interface CreatorProfile {
   socialLinks: SocialLinks;
   userRole: UserRole;
   profileCompleted?: boolean;
+  /** Persistent counters (updated on create/delete, not recomputed only on profile open) */
+  postsCount?: number;
+  worksCount?: number;
   createdAt?: string;
 
   // Collaborator Exchange & Verification Requirements
@@ -214,6 +232,9 @@ export interface AuthSession {
   jwtToken: string;
   isNewUser?: boolean;
   profileCompleted?: boolean;
+  /** Persistent counters (updated on create/delete, not recomputed only on profile open) */
+  postsCount?: number;
+  worksCount?: number;
 }
 
 export interface BriefParseRequest {

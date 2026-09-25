@@ -50,9 +50,22 @@ export const CreatorCard: React.FC<CreatorCardProps> = ({ creator, onOpenDetail,
               className="shrink-0 ring-4 ring-[var(--card-bg)] shadow-md rounded-xl"
             />
             <div className="min-w-0 flex-1 pt-1">
-              <h3 className="font-editorial text-lg font-bold text-[var(--text-primary)] group-hover:text-[var(--accent-amber)] transition-colors truncate">
-                {creator.name}
-              </h3>
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="font-editorial text-lg font-bold text-[var(--text-primary)] group-hover:text-[var(--accent-amber)] transition-colors truncate">
+                  {creator.name}
+                </h3>
+                {typeof creator.relevanceScore === 'number' && creator.relevanceScore > 0 && (
+                  <span className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[var(--accent-amber)]/15 text-[var(--accent-amber)] border border-[var(--accent-amber)]/30">
+                    {Math.round(
+                      creator.relevanceScore <= 1
+                        ? creator.relevanceScore * 100
+                        : creator.relevanceScore <= 100
+                          ? creator.relevanceScore
+                          : creator.relevanceScore / 100
+                    )}%
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] font-mono text-[var(--accent-amber)] truncate">
                 @{creator.username}
               </p>
@@ -139,7 +152,7 @@ export const CreatorCard: React.FC<CreatorCardProps> = ({ creator, onOpenDetail,
             }}
             className="flex-1 py-2 rounded-xl text-xs font-semibold bg-[var(--card-inner-bg)] hover:bg-[var(--card-inner-border)] text-[var(--text-primary)] border border-[var(--card-inner-border)] transition-colors cursor-pointer text-center flex items-center justify-center gap-1"
           >
-            <span>Dossier</span>
+            <span>Profile</span>
             <ArrowUpRight className="w-3 h-3" />
           </button>
 

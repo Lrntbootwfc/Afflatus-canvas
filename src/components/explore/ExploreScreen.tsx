@@ -42,6 +42,7 @@ import { PublicProfileView } from './PublicProfileView';
 import {
   fetchExploreFeedFromFirestore,
   createConnectionRequest,
+  getProfileFromFirestore,
 } from '../../lib/firebase';
 import { GlobalPostsFeed } from '../feed/GlobalPostsFeed';
 import { CreatePostInput } from '../feed/CreatePostInput';
@@ -52,6 +53,7 @@ interface ExploreScreenProps {
   onNavigateToAuth: () => void;
   onViewCreatorProfile: (creator: CreatorProfile) => void;
   onInitiateConnection: (creator: CreatorProfile, defaultMessage?: string) => void;
+  onOpenMessenger?: (connectionId: string) => void;
   initialTab?: TabType;
   initialCategory?: string;
   initialSearch?: string;
@@ -76,6 +78,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
   onNavigateToAuth,
   onViewCreatorProfile,
   onInitiateConnection,
+  onOpenMessenger,
   initialTab,
   initialCategory,
   initialSearch,
@@ -174,6 +177,23 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
     if (initialSearch !== undefined) setSearchQuery(initialSearch);
   }, [initialTab, initialCategory, initialSearch]);
 
+  // Open FULL public profile (works/posts/bio) when navigated from AI Match — not CreatorDetailModal
+  useEffect(() => {
+    if (!initialEntity || initialEntity.type !== 'creator' || !initialEntity.id) return;
+    let cancelled = false;
+    setViewingPublicProfileCreatorId(initialEntity.id);
+    getProfileFromFirestore(initialEntity.id)
+      .then((profile) => {
+        if (!cancelled && profile) {
+          setViewingPublicProfileCreator(profile as any);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [initialEntity?.type, initialEntity?.id]);
+
   useEffect(() => {
     if (initialEntity && feedData) {
       if (initialEntity.type === 'task') {
@@ -183,8 +203,20 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
         const found = feedData.projects?.find((p) => p.id === initialEntity.id);
         if (found) setSelectedProject(found);
       } else if (initialEntity.type === 'creator') {
-        const found = feedData.suggestedCreators?.find((c) => c.id === initialEntity.id);
-        if (found) setSelectedCreator(found);
+        // Prefer full PublicProfileView over modal
+        const found =
+          feedData.suggestedCreators?.find((c) => c.id === initialEntity.id) ||
+          (feedData as any).creators?.find((c: any) => c.id === initialEntity.id);
+        setViewingPublicProfileCreatorId(initialEntity.id);
+        if (found) {
+          setViewingPublicProfileCreator(found as any);
+        } else {
+          getProfileFromFirestore(initialEntity.id)
+            .then((profile) => {
+              if (profile) setViewingPublicProfileCreator(profile as any);
+            })
+            .catch(() => {});
+        }
       } else if (initialEntity.type === 'club') {
         const found = feedData.clubs?.find((c) => c.id === initialEntity.id);
         if (found) setSelectedClub(found);
@@ -775,7 +807,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
 
       {/* Global Posts Feed */}
       {mainTab === 'feed' && (
-        <GlobalPostsFeed currentUser={currentUser} refreshTrigger={feedRefreshTrigger} />
+        <GlobalPostsFeed currentUser={currentUser} refreshTrigger={feedRefreshTrigger} onOpenMessenger={onOpenMessenger} />
       )}
 
       {/* 5. Detail Modals */}
