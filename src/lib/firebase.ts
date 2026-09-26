@@ -51,6 +51,63 @@ export interface SharedPostRef {
   authorId?: string;
 }
 
+
+/** Deterministic 1:1 direct-message id for a user pair (order-independent). */
+export function directPairId(userA: string, userB: string): string {
+  const [a, b] = [String(userA), String(userB)].sort();
+  return `dm_${a}_${b}`;
+}
+
+/** Strip internal Firestore/SDK messages from anything shown to users. */
+
+/** Coerce Firestore Timestamp | Date | string | number to sortable ISO string */
+function toSortKey(v: unknown): string {
+  if (v == null || v === '') return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' && Number.isFinite(v)) return new Date(v).toISOString();
+  if (v instanceof Date) return v.toISOString();
+  const any = v as { toDate?: () => Date; seconds?: number };
+  if (typeof any.toDate === 'function') {
+    try {
+      return any.toDate().toISOString();
+    } catch {
+      /* fall through */
+    }
+  }
+  if (typeof any.seconds === 'number') {
+    return new Date(any.seconds * 1000).toISOString();
+  }
+  return String(v);
+}
+
+function toSortMs(v: unknown): number {
+  const s = toSortKey(v);
+  if (!s) return 0;
+  const n = Date.parse(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function sanitizeUserFacingError(err: unknown, fallback = 'Something went wrong. Please try again.'): string {
+  const msg = String((err as any)?.message || err || '');
+  const lower = msg.toLowerCase();
+  if (
+    lower.includes('target id already exists') ||
+    lower.includes('already exists') && lower.includes('target') ||
+    lower.includes('permission-denied') ||
+    lower.includes('missing or insufficient permissions') ||
+    lower.includes('failed-precondition') ||
+    lower.includes('requires an index') ||
+    lower.includes('firebase') ||
+    lower.includes('firestore') ||
+    /[a-z0-9]{20,}/i.test(msg) && lower.includes('error')
+  ) {
+    return fallback;
+  }
+  // Keep short, human messages we intentionally throw
+  if (msg.length > 180) return fallback;
+  return msg || fallback;
+}
+
 export interface ConnectionRequest {
   id: string;
   senderId: string;
@@ -66,6 +123,11 @@ export interface ConnectionRequest {
   updatedAt?: string;
   projectId?: string;
   taskId?: string;
+  /** Per-user unread counts on this DM (userId → count) */
+  unreadCounts?: Record<string, number>;
+  lastMessageAt?: string;
+  lastMessageText?: string;
+  pairKey?: string;
 }
 
 // Firebase config — ONLY from environment variables (.env local / Render env).
@@ -704,27 +766,43 @@ export async function createConnectionRequest(params: {
     console.warn('[createConnectionRequest] profile check failed:', e?.message || e);
   }
 
-  // Duplicate check
-  const senderDocs = await getDocs(query(collection(db, 'connections'), where('senderId', '==', senderId)));
-  const dup = senderDocs.docs.map(d => d.data() as ConnectionRequest).find((c) => {
-    if (c.recipientId !== params.recipientId) return false;
-    if (params.taskId && c.taskId === params.taskId) return true;
-    if (params.projectId && c.projectId === params.projectId) return true;
-    if (!params.taskId && !params.projectId) return true;
-    return false;
-  });
-  if (dup) {
-    return { connection: dup, alreadyExists: true };
+  // --- One pair of users → at most one direct connection/DM ---
+  const pairKey = [senderId, params.recipientId].sort().join('_');
+  const pairId = `dm_${pairKey}`;
+
+  // Prefer deterministic doc id
+  const pairRef = doc(db, 'connections', pairId);
+  const pairSnap = await getDoc(pairRef);
+  if (pairSnap.exists()) {
+    const existing = { id: pairSnap.id, ...pairSnap.data() } as ConnectionRequest;
+    return { connection: existing, alreadyExists: true };
   }
 
-  const id = `conn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  // Also scan legacy random ids for same pair (either direction)
+  const [asSender, asRecipient] = await Promise.all([
+    getDocs(query(collection(db, 'connections'), where('senderId', '==', senderId))),
+    getDocs(query(collection(db, 'connections'), where('recipientId', '==', senderId))),
+  ]);
+  const legacy = [...asSender.docs, ...asRecipient.docs]
+    .map((d) => ({ id: d.id, ...d.data() } as ConnectionRequest))
+    .find((c) => {
+      const other = c.senderId === senderId ? c.recipientId : c.senderId;
+      return other === params.recipientId;
+    });
+  if (legacy) {
+    return { connection: legacy, alreadyExists: true };
+  }
+
+  const id = pairId;
   const connection: ConnectionRequest = {
     id,
-    senderId: params.senderId,
+    senderId,
     recipientId: params.recipientId,
     message: params.message || '',
     status: 'pending',
     createdAt: new Date().toISOString(),
+    pairKey,
+    unreadCounts: { [senderId]: 0, [params.recipientId]: 0 },
   };
   // Firestore rejects `undefined` field values — only include optional fields when set
   if (params.projectId) connection.projectId = params.projectId;
@@ -739,6 +817,8 @@ export async function createConnectionRequest(params: {
     message: connection.message,
     status: connection.status,
     createdAt: connection.createdAt,
+    pairKey,
+    unreadCounts: connection.unreadCounts,
     createdAtTs: serverTimestamp(),
   };
   if (connection.projectId) payload.projectId = connection.projectId;
@@ -746,7 +826,16 @@ export async function createConnectionRequest(params: {
   if (connection.kind) payload.kind = connection.kind;
   if (connection.sharedPost) payload.sharedPost = connection.sharedPost;
 
-  await setDoc(doc(db, 'connections', id), payload);
+  try {
+    await setDoc(pairRef, payload);
+  } catch (err: any) {
+    // Race: another client created the same pair — reuse
+    const again = await getDoc(pairRef);
+    if (again.exists()) {
+      return { connection: { id: again.id, ...again.data() } as ConnectionRequest, alreadyExists: true };
+    }
+    throw err;
+  }
 
   try {
     await createNotification({
@@ -759,7 +848,7 @@ export async function createConnectionRequest(params: {
         ? (params.message?.slice(0, 120) || 'Shared a post with you')
         : (params.message?.slice(0, 120) || 'Someone wants to connect with you.'),
       relatedId: id,
-      fromUserId: params.senderId,
+      fromUserId: senderId,
     });
   } catch {
     /* non-blocking */
@@ -767,6 +856,7 @@ export async function createConnectionRequest(params: {
 
   return { connection, alreadyExists: false };
 }
+
 
 /**
  * List connections involving the given user (as sender or recipient).
@@ -776,12 +866,37 @@ export async function getConnectionsForUser(userId: string): Promise<ConnectionR
   const runQuery = async (): Promise<ConnectionRequest[]> => {
     const asSender = await getDocs(query(collection(db, 'connections'), where('senderId', '==', userId)));
     const asRecipient = await getDocs(query(collection(db, 'connections'), where('recipientId', '==', userId)));
-    const map = new Map<string, ConnectionRequest>();
+    const byId = new Map<string, ConnectionRequest>();
     for (const d of [...asSender.docs, ...asRecipient.docs]) {
-      map.set(d.id, { id: d.id, ...d.data() } as ConnectionRequest);
+      byId.set(d.id, { id: d.id, ...d.data() } as ConnectionRequest);
     }
-    return Array.from(map.values()).sort((a, b) =>
-      (b.createdAt || '').localeCompare(a.createdAt || '')
+    // Deduplicate 1:1 pairs (legacy random ids + dm_* ids for same people)
+    const statusRank: Record<string, number> = {
+      collaborating: 4,
+      accepted: 3,
+      completed: 2,
+      pending: 1,
+      declined: 0,
+    };
+    const byPair = new Map<string, ConnectionRequest>();
+    for (const c of byId.values()) {
+      const other = c.senderId === userId ? c.recipientId : c.senderId;
+      const key = [userId, other].sort().join('_');
+      const prev = byPair.get(key);
+      if (!prev) {
+        byPair.set(key, c);
+        continue;
+      }
+      const rNew = statusRank[c.status] ?? 0;
+      const rOld = statusRank[prev.status] ?? 0;
+      if (rNew > rOld) byPair.set(key, c);
+      else if (rNew === rOld && toSortMs(c.createdAt) > toSortMs(prev.createdAt)) byPair.set(key, c);
+      // Prefer deterministic dm_ id when ranks equal
+      else if (rNew === rOld && c.id.startsWith('dm_') && !prev.id.startsWith('dm_')) byPair.set(key, c);
+    }
+    return Array.from(byPair.values()).sort((a, b) =>
+      toSortMs(b.lastMessageAt || b.updatedAt || b.createdAt) -
+      toSortMs(a.lastMessageAt || a.updatedAt || a.createdAt)
     );
   };
 
@@ -790,10 +905,10 @@ export async function getConnectionsForUser(userId: string): Promise<ConnectionR
       return await runQuery();
     } catch (err: any) {
       const msg = String(err?.message || '');
-      // "Target ID already exists" = Firestore SDK conflict from concurrent queries
-      if (msg.includes('Target ID already exists') && attempt < 2) {
+      // Internal SDK conflict — never surface to UI
+      if (msg.toLowerCase().includes('target id already exists') && attempt < 2) {
         console.warn(`[Firestore] getConnectionsForUser: query target conflict, retry ${attempt + 1}/3`);
-        await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
         continue;
       }
       console.warn('[Firestore] getConnectionsForUser failed:', msg);
@@ -824,6 +939,19 @@ export async function respondToConnection(
   const data = snap.data() as ConnectionRequest;
   if (data.recipientId !== actingUserId) {
     throw new Error('Only the recipient can accept or decline this request.');
+  }
+
+  // Idempotent: already handled → return as-is (no second notification / side effects)
+  if (data.status === 'accepted' || data.status === 'collaborating' || data.status === 'completed') {
+    if (status === 'accepted' || status === 'declined') {
+      return { ...data, id: connectionId };
+    }
+  }
+  if (data.status === 'declined' && status === 'declined') {
+    return { ...data, id: connectionId };
+  }
+  if (data.status === 'declined' && status === 'accepted') {
+    throw new Error('This request was already declined.');
   }
 
   const updated: ConnectionRequest = {
@@ -862,21 +990,49 @@ export async function toggleCollaborationStatus(
     throw new Error('You must be signed in to request collaboration.');
   }
 
-  const res = await fetch(`/api/temporary-chat/${connectionId}/collaborate`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-user-id': actingUserId
-    }
-  });
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to toggle collaboration');
+  const ref = doc(db, 'connections', connectionId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Connection not found.');
+  const data = snap.data() as ConnectionRequest;
+  if (data.senderId !== actingUserId && data.recipientId !== actingUserId) {
+    throw new Error('You are not part of this connection.');
   }
 
-  const data = await res.json();
-  return data.connection;
+  const requested = new Set(data.collaborateRequestedBy || []);
+  requested.add(actingUserId);
+  const list = Array.from(requested);
+  const both = list.length >= 2;
+  const nextStatus = both ? 'collaborating' : data.status === 'pending' ? 'accepted' : data.status;
+
+  await updateDoc(ref, {
+    collaborateRequestedBy: list,
+    status: nextStatus,
+    updatedAt: serverTimestamp(),
+  });
+
+  const peerId = data.senderId === actingUserId ? data.recipientId : data.senderId;
+  try {
+    await createNotification({
+      userId: peerId,
+      type: 'connection_accepted',
+      title: both ? 'Collaboration started' : 'Collaboration requested',
+      body: both
+        ? 'You are now collaborating on Afflatus.'
+        : 'Your connection partner requested to collaborate.',
+      relatedId: connectionId,
+      fromUserId: actingUserId,
+    });
+  } catch {
+    /* non-blocking */
+  }
+
+  return {
+    ...data,
+    id: connectionId,
+    collaborateRequestedBy: list,
+    status: nextStatus as ConnectionRequest['status'],
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 /**
@@ -1001,6 +1157,7 @@ export interface ChatMessage {
   text: string;
   createdAt: string;
   read: boolean;
+  sharedPost?: SharedPostRef;
 }
 
 export type NotificationType = 'connection_request' | 'connection_accepted' | 'message';
@@ -1076,6 +1233,7 @@ export async function notifyConnectionAccepted(params: {
 
 /**
  * Send a message on an accepted connection. Creates notification for recipient.
+ * Increments per-conversation unread for the recipient (persisted on connection).
  */
 export async function sendMessage(params: {
   connectionId: string;
@@ -1083,13 +1241,14 @@ export async function sendMessage(params: {
   recipientId: string;
   text: string;
   senderName?: string;
+  sharedPost?: SharedPostRef;
 }): Promise<ChatMessage> {
   const current = auth.currentUser;
   if (!current || current.uid !== params.senderId) {
     throw new Error('You must be signed in to send messages.');
   }
-  const trimmed = params.text.trim();
-  if (!trimmed) throw new Error('Message cannot be empty.');
+  const trimmed = (params.text || '').trim();
+  if (!trimmed && !params.sharedPost) throw new Error('Message cannot be empty.');
 
   const id = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const message: ChatMessage = {
@@ -1097,20 +1256,52 @@ export async function sendMessage(params: {
     connectionId: params.connectionId,
     senderId: params.senderId,
     recipientId: params.recipientId,
-    text: trimmed,
+    text: trimmed || (params.sharedPost ? 'Shared a post' : ''),
     createdAt: new Date().toISOString(),
     read: false,
   };
-  await setDoc(doc(db, 'messages', id), {
-    ...message,
+  if (params.sharedPost) (message as any).sharedPost = params.sharedPost;
+
+  const payload: Record<string, unknown> = {
+    id: message.id,
+    connectionId: message.connectionId,
+    senderId: message.senderId,
+    recipientId: message.recipientId,
+    text: message.text,
+    createdAt: message.createdAt,
+    read: false,
     createdAtTs: serverTimestamp(),
-  });
+  };
+  if (params.sharedPost) payload.sharedPost = params.sharedPost;
+  await setDoc(doc(db, 'messages', id), payload);
+
+  // Per-chat unread on connection doc (not a global counter)
+  try {
+    const connRef = doc(db, 'connections', params.connectionId);
+    const connSnap = await getDoc(connRef);
+    if (connSnap.exists()) {
+      const prev = ((connSnap.data() as ConnectionRequest).unreadCounts || {}) as Record<string, number>;
+      const nextUnread = {
+        ...prev,
+        [params.recipientId]: (Number(prev[params.recipientId]) || 0) + 1,
+        [params.senderId]: Number(prev[params.senderId]) || 0,
+      };
+      await updateDoc(connRef, {
+        unreadCounts: nextUnread,
+        lastMessageAt: message.createdAt,
+        lastMessageText: message.text.slice(0, 120),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (e) {
+    console.warn('[messages] unreadCounts update failed', e);
+  }
 
   await createNotification({
     userId: params.recipientId,
     type: 'message',
     title: 'New message',
-    body: `${params.senderName || 'Someone'}: ${trimmed.slice(0, 80)}${trimmed.length > 80 ? '…' : ''}`,
+    body: `${params.senderName || 'Someone'}: ${message.text.slice(0, 80)}${message.text.length > 80 ? '…' : ''}`,
     relatedId: params.connectionId,
     fromUserId: params.senderId,
   });
@@ -1126,35 +1317,41 @@ export function subscribeToMessages(
   onChange: (messages: ChatMessage[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  // Single-field query only — no composite index required.
+  // Sort by createdAt on the client (handles string | Timestamp).
   const q = query(
     collection(db, 'messages'),
     where('connectionId', '==', connectionId),
-    orderBy('createdAt', 'asc'),
     limit(200)
   );
   return onSnapshot(
     q,
     (snap) => {
-      const msgs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ChatMessage));
+      const msgs = snap.docs
+        .map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            ...data,
+            createdAt:
+              typeof data.createdAt === 'string'
+                ? data.createdAt
+                : toSortKey(data.createdAt || data.createdAtTs),
+          } as ChatMessage;
+        })
+        .sort((a, b) => toSortMs(a.createdAt) - toSortMs(b.createdAt));
       onChange(msgs);
     },
     (err) => {
-      console.warn('[Firestore] messages subscription error:', err);
-      // Fallback without orderBy if index missing
-      const q2 = query(collection(db, 'messages'), where('connectionId', '==', connectionId), limit(200));
-      return onSnapshot(q2, (snap) => {
-        const msgs = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() } as ChatMessage))
-          .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-        onChange(msgs);
-      }, (e2) => onError?.(e2 as Error));
+      const msg = String((err as any)?.message || err);
+      console.warn('[Firestore] messages subscription error:', msg);
+      if (!msg.toLowerCase().includes('target id already exists')) {
+        onError?.(err as Error);
+      }
     }
   );
 }
 
-/**
- * Subscribe to notifications for a user (real-time).
- */
 export function subscribeToNotifications(
   userId: string,
   onChange: (items: AppNotification[]) => void,
@@ -1171,12 +1368,15 @@ export function subscribeToNotifications(
     (snap) => {
       const items = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as AppNotification))
-        .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        .sort((a, b) => toSortMs(b.createdAt) - toSortMs(a.createdAt));
       onChange(items);
     },
     (err) => {
-      console.warn('[Firestore] notifications subscription error:', err);
-      onError?.(err as Error);
+      const msg = String((err as any)?.message || err);
+      console.warn('[Firestore] notifications subscription error:', msg);
+      if (!msg.toLowerCase().includes('target id already exists')) {
+        onError?.(err as Error);
+      }
     }
   );
 }
@@ -1202,19 +1402,66 @@ export async function markAllNotificationsRead(userId: string): Promise<void> {
   }
 }
 
+
+/**
+ * Real-time listener for the current user's connections (sidebar + unreadCounts).
+ * Deduplicates 1:1 pairs the same way as getConnectionsForUser.
+ */
+export function subscribeToUserConnections(
+  userId: string,
+  onChange: (list: ConnectionRequest[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  // Poll instead of dual onSnapshot queries — avoids "Target ID already exists"
+  // while still updating unreadCounts / list without a full page refresh.
+  let cancelled = false;
+  const tick = async () => {
+    if (cancelled) return;
+    try {
+      const list = await getConnectionsForUser(userId);
+      if (!cancelled) onChange(list);
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      if (msg.toLowerCase().includes('target id already exists')) return;
+      console.warn('[Firestore] connections poll:', msg);
+      if (!cancelled) onError?.(err as Error);
+    }
+  };
+  tick();
+  const interval = setInterval(tick, 2000);
+  return () => {
+    cancelled = true;
+    clearInterval(interval);
+  };
+}
+
 export async function markMessagesRead(connectionId: string, readerId: string): Promise<void> {
   const current = auth.currentUser;
   if (!current || current.uid !== readerId) return;
   try {
+    // Single-field query (no composite index); filter unread for this reader client-side
     const snap = await getDocs(
-      query(
-        collection(db, 'messages'),
-        where('connectionId', '==', connectionId),
-        where('recipientId', '==', readerId),
-        where('read', '==', false)
-      )
+      query(collection(db, 'messages'), where('connectionId', '==', connectionId), limit(200))
     );
-    await Promise.all(snap.docs.map((d) => updateDoc(d.ref, { read: true })));
+    const unread = snap.docs.filter((d) => {
+      const data = d.data() as any;
+      return data.recipientId === readerId && data.read === false;
+    });
+    if (unread.length) {
+      await Promise.all(unread.map((d) => updateDoc(d.ref, { read: true })));
+    }
+    // Clear per-conversation unread for this reader (idempotent)
+    const connRef = doc(db, 'connections', connectionId);
+    const connSnap = await getDoc(connRef);
+    if (connSnap.exists()) {
+      const prev = ((connSnap.data() as ConnectionRequest).unreadCounts || {}) as Record<string, number>;
+      if ((Number(prev[readerId]) || 0) !== 0) {
+        await updateDoc(connRef, {
+          unreadCounts: { ...prev, [readerId]: 0 },
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
   } catch (err: any) {
     console.warn('[Firestore] markMessagesRead:', err?.message || err);
   }
@@ -1309,7 +1556,7 @@ export async function listAiMatchConversations(userId: string): Promise<AiMatchC
             messageCount: Array.isArray(data.messages) ? data.messages.length : data.messageCount,
           };
         })
-        .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+        .sort((a, b) => toSortMs(b.updatedAt) - toSortMs(a.updatedAt));
     } catch (err2: any) {
       console.warn('[AI Match] list conversations:', err2?.message || err?.message || err);
       return [];

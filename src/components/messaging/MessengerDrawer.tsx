@@ -2,13 +2,17 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, MessageSquare, Send, Loader2, Users } from 'lucide-react';
 import type { CreatorProfile } from '../../types';
 import {
-  getConnectionsForUser,
   getProfileFromFirestore,
   toggleCollaborationStatus,
+  sendMessage,
+  subscribeToMessages,
+  markMessagesRead,
+  subscribeToUserConnections,
+  sanitizeUserFacingError,
+  auth,
   type ConnectionRequest,
   type ChatMessage,
 } from '../../lib/firebase';
-import { affilApi } from '../../lib/affilApi';
 import { UserAvatar } from '../UserAvatar';
 
 interface MessengerDrawerProps {
@@ -39,6 +43,8 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  /** Prefer Firebase Auth uid for unreadCounts keys (must match sendMessage recipientId). */
+  const myUid = auth.currentUser?.uid || currentUser.id;
 
   const accepted = useMemo(
     () => connections.filter((c) => c.status === 'accepted' || c.status === 'collaborating' || c.status === 'completed'),
@@ -55,71 +61,77 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
+    setLoadingList(true);
+    setError(null);
     let cancelled = false;
-    (async () => {
-      setLoadingList(true);
-      setError(null);
-      try {
-        const list = await getConnectionsForUser(currentUser.id);
+    const unsub = subscribeToUserConnections(
+      currentUser.id,
+      async (list) => {
         if (cancelled) return;
         setConnections(list);
-        const acceptedList = list.filter((c) => c.status === 'accepted' || c.status === 'collaborating' || c.status === 'completed');
+        const acceptedList = list.filter(
+          (c) => c.status === 'accepted' || c.status === 'collaborating' || c.status === 'completed'
+        );
         if (initialConnectionId && acceptedList.some((c) => c.id === initialConnectionId)) {
           setSelectedId(initialConnectionId);
         } else if (!selectedId && acceptedList[0]) {
           setSelectedId(acceptedList[0].id);
         }
-        // Prefetch peer profiles
         const ids = new Set<string>();
         acceptedList.forEach((c) => {
           ids.add(c.senderId === currentUser.id ? c.recipientId : c.senderId);
         });
-        const map: PeerMap = {};
         await Promise.all(
           Array.from(ids).map(async (id) => {
-            map[id] = await getProfileFromFirestore(id);
+            try {
+              const p = await getProfileFromFirestore(id);
+              if (!cancelled) {
+                setPeers((prev) => (prev[id] ? prev : { ...prev, [id]: p }));
+              }
+            } catch {
+              if (!cancelled) {
+                setPeers((prev) => (prev[id] !== undefined ? prev : { ...prev, [id]: null }));
+              }
+            }
           })
         );
-        if (!cancelled) setPeers(map);
-      } catch (err: any) {
-        if (!cancelled) setError(err?.message || 'Failed to load conversations.');
-      } finally {
         if (!cancelled) setLoadingList(false);
+      },
+      (err) => {
+        if (!cancelled) {
+          console.warn('[Messenger] connections listen:', err);
+          // Do not surface Target ID / internal SDK errors to the user
+          setLoadingList(false);
+        }
       }
-    })();
+    );
     return () => {
       cancelled = true;
+      unsub();
     };
   }, [isOpen, currentUser.id, initialConnectionId]);
 
-  // Poll for messages in temporary chat session
+  // Real-time Firestore messages for the selected accepted connection
   useEffect(() => {
     if (!isOpen || !selectedId) {
       setMessages([]);
       return;
     }
 
-    let isMounted = true;
-
-    const fetchMessages = async () => {
-      try {
-        const res = await affilApi.getTemporaryChat(selectedId);
-        if (isMounted) {
-          setMessages(res.messages);
-          await affilApi.markTemporaryChatRead(selectedId);
-        }
-      } catch (err: any) {
-        if (isMounted) setError(err.message || 'Failed to fetch messages');
+    setError(null);
+    const unsub = subscribeToMessages(
+      selectedId,
+      (msgs) => {
+        setMessages(msgs);
+        // Mark inbound messages as read
+        markMessagesRead(selectedId, myUid).catch(() => {});
+      },
+      (err) => {
+        const safe = sanitizeUserFacingError(err, 'Could not load messages. Please try again.');
+        if (safe) setError(safe);
       }
-    };
-
-    fetchMessages();
-    const intervalId = setInterval(fetchMessages, 3000); // poll every 3s
-
-    return () => {
-      isMounted = false;
-      clearInterval(intervalId);
-    };
+    );
+    return () => unsub();
   }, [isOpen, selectedId, currentUser.id]);
 
   useEffect(() => {
@@ -132,17 +144,18 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
     setSending(true);
     setError(null);
     try {
-      await affilApi.sendTemporaryChat(
-        selected.id,
-        peerId,
-        draft
-      );
-      // Optimistically add message or fetch again
-      const res = await affilApi.getTemporaryChat(selected.id);
-      setMessages(res.messages);
+      await sendMessage({
+        connectionId: selected.id,
+        senderId: currentUser.id,
+        recipientId: peerId,
+        text: draft,
+        senderName: currentUser.name || currentUser.username,
+      });
+      // Real-time listener will append the message
       setDraft('');
     } catch (err: any) {
-      setError(err?.message || 'Failed to send message.');
+      const safe = sanitizeUserFacingError(err, 'Could not send message. Please try again.');
+      if (safe) setError(safe);
     } finally {
       setSending(false);
     }
@@ -203,7 +216,25 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                     <li key={c.id}>
                       <button
                         type="button"
-                        onClick={() => setSelectedId(c.id)}
+                        onClick={() => {
+                          setSelectedId(c.id);
+                          // Optimistic: clear unread badge immediately
+                          setConnections((prev) =>
+                            prev.map((x) =>
+                              x.id === c.id
+                                ? {
+                                    ...x,
+                                    unreadCounts: {
+                                      ...(x.unreadCounts || {}),
+                                      [myUid]: 0,
+                                      [currentUser.id]: 0,
+                                    },
+                                  }
+                                : x
+                            )
+                          );
+                          markMessagesRead(c.id, myUid).catch(() => {});
+                        }}
                         className={`w-full text-left px-3 py-2.5 flex items-center gap-2 cursor-pointer transition-colors ${
                           active
                             ? 'bg-[var(--accent-amber)]/15 border-l-2 border-[var(--accent-amber)]'
@@ -211,14 +242,36 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                         }`}
                       >
                         <UserAvatar name={p?.name || 'Creator'} avatarUrl={p?.avatarUrl} size="sm" />
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-[var(--text-primary)] truncate">
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <p
+                            className={`text-xs truncate ${
+                              (Number(c.unreadCounts?.[myUid]) || Number(c.unreadCounts?.[currentUser.id]) || 0) > 0 &&
+                              c.id !== selectedId
+                                ? 'font-bold text-[var(--text-primary)]'
+                                : 'font-semibold text-[var(--text-primary)]'
+                            }`}
+                          >
                             {p?.name || 'Creator'}
                           </p>
                           <p className="text-[10px] text-[var(--text-muted)] truncate">
-                            {p?.primaryRole || 'Connected'}
+                            {c.lastMessageText || p?.primaryRole || 'Connected'}
                           </p>
                         </div>
+                        {(() => {
+                          const n =
+                            Number(c.unreadCounts?.[myUid]) ||
+                            Number(c.unreadCounts?.[currentUser.id]) ||
+                            0;
+                          if (n <= 0 || c.id === selectedId) return null;
+                          return (
+                            <span
+                              className="shrink-0 ml-1 min-w-[1.25rem] h-5 px-1.5 rounded-full bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] text-[10px] font-bold leading-none flex items-center justify-center"
+                              aria-label={`${n} unread`}
+                            >
+                              {n > 99 ? '99+' : n}
+                            </span>
+                          );
+                        })()}
                       </button>
                     </li>
                   );
@@ -298,7 +351,32 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                               : 'bg-[var(--card-inner-bg)] text-[var(--text-primary)] border border-[var(--card-inner-border)] rounded-bl-md'
                           }`}
                         >
-                          {m.text}
+                          {(m as any).sharedPost ? (
+                            <div className="space-y-2">
+                              <p className="text-[10px] font-bold uppercase tracking-wider opacity-80">Shared Post</p>
+                              {(m as any).sharedPost.imageUrl && (
+                                <img
+                                  src={(m as any).sharedPost.imageUrl}
+                                  alt=""
+                                  className="w-full max-h-36 object-cover rounded-xl"
+                                />
+                              )}
+                              <p className="font-semibold line-clamp-2">
+                                {(m as any).sharedPost.caption || 'Post'}
+                              </p>
+                              {(m as any).sharedPost.authorName && (
+                                <p className="text-[10px] opacity-80">by {(m as any).sharedPost.authorName}</p>
+                              )}
+                              <a
+                                href={(m as any).sharedPost.url || `/?post=${(m as any).sharedPost.postId}`}
+                                className={`inline-block mt-1 text-[10px] font-bold underline ${mine ? 'text-[#181614]' : 'text-[var(--accent-amber)]'}`}
+                              >
+                                View Post
+                              </a>
+                            </div>
+                          ) : (
+                            m.text
+                          )}
                           <div
                             className={`text-[9px] mt-1 ${
                               mine ? 'text-[#181614]/70' : 'text-[var(--text-muted)]'
