@@ -272,6 +272,11 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
 
   // Connection handler from creator card
   const handleConnectCreator = (creator: ExploreCreatorItem) => {
+    if (!currentUser?.profileCompleted) {
+      onNavigateToOnboarding?.();
+      return;
+    }
+
     handleGatedAction(`Connect with ${creator.name}`, async () => {
       const msg = `Hi ${creator.name}, I discovered your profile on Explore and would love to connect regarding upcoming productions.`;
       await sendConnectionToBackend(creator.id, creator.name, msg);
@@ -695,7 +700,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="flex w-full flex-col gap-5">
                     {feedData.suggestedCreators.slice(0, 3).map((creator) => (
                       <CreatorCard
                         key={creator.id}
@@ -788,7 +793,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             feedData.suggestedCreators.length === 0 ? (
               renderEmptyState('Collaborators')
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="flex w-full flex-col gap-5">
                 {feedData.suggestedCreators.map((creator) => (
                   <CreatorCard
                     key={creator.id}

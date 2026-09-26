@@ -107,6 +107,12 @@ export interface CreatorProfile {
   socialLinks: SocialLinks;
   userRole: UserRole;
   profileCompleted?: boolean;
+  /** Join Afflatus application gate: pending | approved | rejected */
+  applicationStatus?: 'pending' | 'approved' | 'rejected';
+  applicationMessage?: string;
+  applicationSubmittedAt?: string;
+  applicationReviewedAt?: string;
+  applicationReviewedBy?: string;
   /** Persistent counters (updated on create/delete, not recomputed only on profile open) */
   postsCount?: number;
   worksCount?: number;

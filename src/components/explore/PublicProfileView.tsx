@@ -667,15 +667,21 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                   <p className="text-xs text-[var(--text-secondary)]">Check back later for updates from {creator.name}.</p>
                 </div>
               ) : (
-                <div className="columns-1 sm:columns-2 lg:columns-3 gap-6 space-y-6">
+                <div
+                  className="w-full gap-4"
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 220px), 1fr))',
+                  }}
+                >
                   {userPosts.map((post) => (
-                    <div key={post.id} className="break-inside-avoid mb-6">
-                      <PostCard
-                        post={post}
-                        currentUserId={currentUser?.id || ''}
-                        onDeleted={() => setUserPosts((prev) => prev.filter((x) => x.id !== post.id))}
-                      />
-                    </div>
+                    <PostCard
+                      key={post.id}
+                      post={post}
+                      currentUserId={currentUser?.id || ''}
+                      currentUser={currentUser}
+                      onDeleted={() => setUserPosts((prev) => prev.filter((x) => x.id !== post.id))}
+                    />
                   ))}
                 </div>
               )}

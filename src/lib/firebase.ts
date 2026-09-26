@@ -428,7 +428,15 @@ export async function syncUserProfileToFirestore(
     await setDoc(userRef, { ...emptyProfile, updatedAt: serverTimestamp() });
     return emptyProfile;
   } catch (err: any) {
-    console.warn('[Firestore] Profile sync failed:', err?.message || err);
+    const msg = String(err?.message || err || '');
+    const code = String(err?.code || '');
+    console.warn('[Firestore] Profile sync failed:', code, msg);
+    if (code === 'permission-denied' || msg.toLowerCase().includes('permission')) {
+      // Surface clearly — usually means firestore.rules not published or users create rule mismatch
+      throw new Error(
+        'Insufficient permission to create your profile. Publish the latest firestore.rules (users create for your own uid) and try again.'
+      );
+    }
     return emptyProfile;
   }
 }
@@ -752,17 +760,25 @@ export async function createConnectionRequest(params: {
   }
   params = { ...params, senderId };
 
-  // Profile-completion gate (cannot be bypassed by calling this helper directly)
+  // Application + profile gates (cannot be bypassed client-side alone)
   try {
     const senderSnap = await getDoc(doc(db, 'users', senderId));
     const senderData = senderSnap.exists() ? senderSnap.data() : null;
+    const appStatus = resolveApplicationStatus(senderData as any);
+    if (appStatus !== 'approved') {
+      throw new Error('Your Afflatus application must be approved before collaborating.');
+    }
     if (!senderData?.profileCompleted) {
       throw new Error(
         'Complete your profile before sending collaboration proposals. Add your roles, location, and required details in Profile Setup.'
       );
     }
   } catch (e: any) {
-    if (e?.message?.includes('Complete your profile')) throw e;
+    if (
+      e?.message?.includes('Complete your profile') ||
+      e?.message?.includes('application must be approved')
+    )
+      throw e;
     console.warn('[createConnectionRequest] profile check failed:', e?.message || e);
   }
 
@@ -1194,6 +1210,10 @@ async function createNotification(n: Omit<AppNotification, 'id' | 'createdAt' | 
     });
   } catch (err: any) {
     console.warn('[Firestore] createNotification failed:', err?.message || err);
+    const msg = String(err?.message || err || '');
+    if (msg.toLowerCase().includes('permission') || err?.code === 'permission-denied') {
+      throw err;
+    }
   }
   return payload;
 }
@@ -1738,6 +1758,323 @@ export async function findConnectionBetween(userA: string, userB: string): Promi
 }
 
 /** Re-export auth state listener for session restore */
+
+/** ---------- Portfolio item likes (per showcase image/item) ---------- */
+export interface PortfolioItemLikeState {
+  itemId: string;
+  creatorId: string;
+  likedBy: string[];
+}
+
+export async function getPortfolioItemLikeState(itemId: string): Promise<PortfolioItemLikeState | null> {
+  if (!itemId) return null;
+  try {
+    const snap = await getDoc(doc(db, 'portfolioLikes', itemId));
+    if (!snap.exists()) return null;
+    const data = snap.data() as any;
+    return {
+      itemId,
+      creatorId: data.creatorId || '',
+      likedBy: Array.isArray(data.likedBy) ? data.likedBy : [],
+    };
+  } catch (e) {
+    console.warn('[portfolioLikes] get failed', e);
+    return null;
+  }
+}
+
+/**
+ * Toggle like on a specific portfolio/showcase item.
+ * Persisted in Firestore collection portfolioLikes/{itemId}.
+ */
+export async function togglePortfolioItemLike(params: {
+  itemId: string;
+  creatorId: string;
+  userId: string;
+}): Promise<{ liked: boolean; likedBy: string[] }> {
+  const current = auth.currentUser;
+  if (!current || current.uid !== params.userId) {
+    throw new Error('You must be signed in to like portfolio items.');
+  }
+  const ref = doc(db, 'portfolioLikes', params.itemId);
+  const snap = await getDoc(ref);
+  let likedBy: string[] = snap.exists()
+    ? Array.isArray((snap.data() as any).likedBy)
+      ? [...(snap.data() as any).likedBy]
+      : []
+    : [];
+  const has = likedBy.includes(params.userId);
+  if (has) {
+    likedBy = likedBy.filter((id) => id !== params.userId);
+  } else {
+    likedBy.push(params.userId);
+  }
+  await setDoc(
+    ref,
+    {
+      itemId: params.itemId,
+      creatorId: params.creatorId,
+      likedBy,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return { liked: !has, likedBy };
+}
+
+
+/** ---------- Join Afflatus application / admin approval ---------- */
+
+export type ApplicationStatus = 'pending' | 'approved' | 'rejected';
+
+/**
+ * Resolve effective application status for access control.
+ * Legacy accounts (no applicationStatus) with completed profile or a real role → approved.
+ */
+export function resolveApplicationStatus(profile: {
+  applicationStatus?: string | null;
+  profileCompleted?: boolean;
+  primaryRole?: string;
+  name?: string;
+  createdAt?: string;
+  applicationSubmittedAt?: string;
+} | null): ApplicationStatus {
+  if (!profile) return 'pending';
+  const s = String(profile.applicationStatus || '').toLowerCase().trim();
+  if (s === 'approved' || s === 'rejected' || s === 'pending') {
+    return s as ApplicationStatus;
+  }
+  const role = String(profile.primaryRole || '').trim();
+  if (profile.profileCompleted === true) return 'approved';
+  if (role && role.toLowerCase() !== 'creator') return 'approved';
+  return 'pending';
+}
+
+/** Live user doc updates (e.g. admin approved while applicant waits). */
+export function subscribeToUserProfile(
+  userId: string,
+  onChange: (profile: CreatorProfile | null) => void
+): () => void {
+  if (!userId) {
+    onChange(null);
+    return () => {};
+  }
+  const ref = doc(db, 'users', userId);
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) {
+        onChange(null);
+        return;
+      }
+      onChange({ id: userId, ...(snap.data() as CreatorProfile) });
+    },
+    (err) => {
+      console.warn('[subscribeToUserProfile]', err);
+    }
+  );
+}
+
+/**
+ * Persist join application in Firestore (source of truth: applications/{uid}).
+ * Also mirrors status onto users/{uid} for routing gates.
+ */
+export async function submitJoinApplication(params: {
+  userId: string;
+  email: string;
+  name: string;
+  message?: string;
+}): Promise<void> {
+  const current = auth.currentUser;
+  if (!current || current.uid !== params.userId) {
+    throw new Error('You must be signed in to apply.');
+  }
+  const now = new Date().toISOString();
+  const message = (params.message || '').trim().slice(0, 2000);
+  const appRef = doc(db, 'applications', current.uid);
+  // Rules require: doc id == auth.uid, data.userId == auth.uid, status == 'pending'
+  const appPayload = {
+    userId: current.uid,
+    email: (params.email || current.email || '').trim() || (current.email || ''),
+    name: (params.name || current.displayName || '').trim() || 'Applicant',
+    message,
+    status: 'pending',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  try {
+    await setDoc(appRef, appPayload, { merge: true });
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    console.error('[submitJoinApplication] applications write failed', err);
+    throw new Error(
+      msg.toLowerCase().includes('permission')
+        ? 'Insufficient permission to submit application. Publish the latest firestore.rules and try again.'
+        : msg || 'Failed to submit application.'
+    );
+  }
+
+  // Verify persistence (source of truth)
+  try {
+    const verify = await getDoc(appRef);
+    if (!verify.exists() || (verify.data() as any)?.status !== 'pending') {
+      throw new Error('Application was not saved as pending. Check Firestore rules and network.');
+    }
+  } catch (err: any) {
+    if (String(err?.message || '').includes('not saved')) throw err;
+    console.warn('[submitJoinApplication] verify read failed', err);
+  }
+
+  try {
+    await setDoc(
+      doc(db, 'users', current.uid),
+      {
+        applicationStatus: 'pending',
+        applicationMessage: message,
+        applicationSubmittedAt: now,
+        email: appPayload.email,
+        name: appPayload.name || undefined,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    console.error('[submitJoinApplication] users mirror failed', err);
+    throw new Error(
+      String(err?.message || '').toLowerCase().includes('permission')
+        ? 'Insufficient permission to update your profile application status. Publish firestore.rules.'
+        : String(err?.message || 'Failed to update profile application status.')
+    );
+  }
+}
+
+export async function listPendingApplications(): Promise<
+  Array<{
+    userId: string;
+    email: string;
+    name: string;
+    message: string;
+    status: string;
+    createdAt: string;
+  }>
+> {
+  const current = auth.currentUser;
+  if (!current) throw new Error('Not signed in');
+
+  // Prefer filtered query; fall back to full collection scan filtered client-side
+  // (still requires admin list rule).
+  let docs: Array<{ id: string; data: () => any }> = [];
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'applications'), where('status', '==', 'pending'), limit(100))
+    );
+    docs = snap.docs as any;
+  } catch (err: any) {
+    console.warn('[listPendingApplications] filtered query failed, trying full collection', err);
+    try {
+      const snap = await getDocs(collection(db, 'applications'));
+      docs = snap.docs as any;
+    } catch (err2: any) {
+      const msg = String(err2?.message || err2 || '');
+      throw new Error(
+        msg.toLowerCase().includes('permission')
+          ? 'Insufficient permission to list applications. Sign in as an authorized admin and publish firestore.rules with isAdmin().'
+          : msg || 'Failed to list applications.'
+      );
+    }
+  }
+
+  return docs
+    .map((d) => {
+      const data = d.data() as any;
+      return {
+        userId: d.id,
+        email: data.email || '',
+        name: data.name || '',
+        message: data.message || '',
+        status: String(data.status || ''),
+        createdAt: typeof data.createdAt === 'string' ? data.createdAt : toSortKey(data.createdAt),
+      };
+    })
+    .filter((row) => row.status.toLowerCase() === 'pending')
+    .sort((a, b) => toSortMs(b.createdAt) - toSortMs(a.createdAt));
+}
+
+export async function reviewJoinApplication(params: {
+  applicantUserId: string;
+  decision: 'approved' | 'rejected';
+  adminUserId: string;
+  adminEmail: string;
+}): Promise<void> {
+  const current = auth.currentUser;
+  if (!current || current.uid !== params.adminUserId) {
+    throw new Error('Not authorized.');
+  }
+  if (params.decision !== 'approved' && params.decision !== 'rejected') {
+    throw new Error('Invalid decision.');
+  }
+
+  const now = new Date().toISOString();
+  const appRef = doc(db, 'applications', params.applicantUserId);
+
+  try {
+    await setDoc(
+      appRef,
+      {
+        status: params.decision,
+        reviewedAt: now,
+        reviewedBy: params.adminEmail,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    console.error('[reviewJoinApplication] applications update failed', err);
+    throw new Error(
+      String(err?.message || '').toLowerCase().includes('permission')
+        ? 'Insufficient permission to review applications. Your account must be listed as admin in firestore.rules and adminConfig.ts.'
+        : String(err?.message || 'Failed to update application.')
+    );
+  }
+
+  try {
+    await setDoc(
+      doc(db, 'users', params.applicantUserId),
+      {
+        applicationStatus: params.decision,
+        applicationReviewedAt: now,
+        applicationReviewedBy: params.adminEmail,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    console.error('[reviewJoinApplication] users update failed', err);
+    throw new Error(
+      String(err?.message || '').toLowerCase().includes('permission')
+        ? 'Insufficient permission to update applicant user status. Admin must be allowed to update users in firestore.rules.'
+        : String(err?.message || 'Failed to update applicant status.')
+    );
+  }
+
+  // Persistent alert for applicant (existing notifications collection)
+  const notif = await createNotification({
+    userId: params.applicantUserId,
+    type: params.decision === 'approved' ? 'connection_accepted' : 'message',
+    title: params.decision === 'approved' ? 'Application approved' : 'Application rejected',
+    body:
+      params.decision === 'approved'
+        ? 'Welcome to Afflatus. Complete your profile setup to unlock full platform interactions. Explore is available for browsing.'
+        : 'Your Afflatus application was not approved at this time.',
+    relatedId: params.applicantUserId,
+    fromUserId: params.adminUserId,
+  });
+  if (!notif?.id) {
+    console.warn('[reviewJoinApplication] notification may not have persisted');
+  }
+}
+
 export { onAuthStateChanged };
 
 

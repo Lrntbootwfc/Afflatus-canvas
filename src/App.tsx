@@ -15,6 +15,9 @@ import { C1AssistantDrawer } from './components/assistant/C1AssistantDrawer';
 import { SettingsModal } from './components/SettingsModal';
 import { ThemeSelectorModal } from './components/ThemeSelectorModal';
 import { MessengerDrawer } from './components/messaging/MessengerDrawer';
+import { ApplyJoinScreen } from './components/access/ApplyJoinScreen';
+import { AdminApplicationsPanel } from './components/access/AdminApplicationsPanel';
+import { isAdminEmail } from './lib/adminConfig';
 import { Loader2 } from 'lucide-react';
 import {
   auth,
@@ -23,6 +26,8 @@ import {
   syncUserProfileToFirestore,
   signOut as firebaseSignOut,
   updateProfileInFirestore,
+  resolveApplicationStatus,
+  subscribeToUserProfile,
 } from './lib/firebase';
 import { setAuth } from './lib/affilApi';
 import affilApi from './lib/affilApi';
@@ -30,8 +35,9 @@ import affilApi from './lib/affilApi';
 export default function App() {
   // Screen Router: 'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore'
   const [currentScreen, setCurrentScreen] = useState<
-    'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore'
+    'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore' | 'apply' | 'pending' | 'rejected'
   >('landing');
+  const [adminAppsOpen, setAdminAppsOpen] = useState(false);
 
   const [currentUser, setCurrentUser] = useState<CreatorProfile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -53,6 +59,36 @@ export default function App() {
     search?: string;
     entity?: { type: 'project' | 'task' | 'creator' | 'club' | 'work'; id: string } | null;
   }>({});
+
+
+  const routeAfterAuth = (profile: CreatorProfile) => {
+    const appStatus = resolveApplicationStatus(profile);
+    if (appStatus === 'rejected') {
+      setCurrentScreen('rejected');
+      return;
+    }
+    if (appStatus === 'pending') {
+      // Not applied yet vs waiting for admin
+      if (profile.applicationStatus === 'pending' || profile.applicationSubmittedAt) {
+        setCurrentScreen('pending');
+      } else {
+        setCurrentScreen('apply');
+      }
+      return;
+    }
+    // APPROVED: Explore/dashboard visible even if basic profile incomplete.
+    // Interaction (messages, collaborate, etc.) stays gated by profileCompleted.
+    if (!profile.profileCompleted) {
+      setCurrentScreen('onboarding');
+      return;
+    }
+    setCurrentScreen('dashboard');
+  };
+
+  const isApproved = (u: CreatorProfile | null) =>
+    !!u && resolveApplicationStatus(u) === 'approved';
+  const canInteract = (u: CreatorProfile | null) =>
+    isApproved(u) && !!u?.profileCompleted;
 
   // Restore session from Firebase Auth + Firestore (source of truth for profiles)
   useEffect(() => {
@@ -81,11 +117,7 @@ export default function App() {
         }
 
         setCurrentUser(profile);
-        if (profile.profileCompleted) {
-          setCurrentScreen('dashboard');
-        } else {
-          setCurrentScreen('onboarding');
-        }
+        routeAfterAuth(profile);
       } catch (err) {
         console.error('Session restore from Firestore failed:', err);
         setAuth(null);
@@ -98,6 +130,39 @@ export default function App() {
 
     return () => unsubscribe();
   }, []);
+
+
+  // Live profile updates (application approval while waiting on pending screen)
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const unsub = subscribeToUserProfile(currentUser.id, (profile) => {
+      if (!profile) return;
+      setCurrentUser((prev) => {
+        const next = { ...(prev || {}), ...profile, id: profile.id };
+        return next as CreatorProfile;
+      });
+      // Re-route when status changes (e.g. pending → approved)
+      const st = resolveApplicationStatus(profile);
+      setCurrentScreen((prevScreen) => {
+        if (st === 'approved') {
+          if (prevScreen === 'pending' || prevScreen === 'apply' || prevScreen === 'rejected') {
+            return profile.profileCompleted ? 'dashboard' : 'onboarding';
+          }
+          return prevScreen;
+        }
+        if (st === 'rejected' && prevScreen !== 'rejected') return 'rejected';
+        if (st === 'pending') {
+          if (profile.applicationStatus === 'pending' || profile.applicationSubmittedAt) {
+            if (prevScreen === 'dashboard' || prevScreen === 'explore' || prevScreen === 'onboarding') {
+              return 'pending';
+            }
+          }
+        }
+        return prevScreen;
+      });
+    });
+    return unsub;
+  }, [currentUser?.id]);
 
   // Public post deep link: /?post=POST_ID
   useEffect(() => {
@@ -182,11 +247,7 @@ export default function App() {
     setCurrentUser(profile);
     setAuth(profile.id);
 
-    if (isNewSignup || !profile.profileCompleted) {
-      setCurrentScreen('onboarding');
-    } else {
-      setCurrentScreen('dashboard');
-    }
+    routeAfterAuth(profile);
   };
 
   // Handle Profile Saved — persist to Firestore + Main Backend profile model
@@ -217,7 +278,12 @@ export default function App() {
     } catch (err) {
       console.warn('[App] Main Backend profile sync skipped:', err);
     }
-    setCurrentScreen('dashboard');
+    // Only unlock full platform when application is approved
+    if (resolveApplicationStatus(saved) === 'approved') {
+      setCurrentScreen('dashboard');
+    } else {
+      routeAfterAuth(saved);
+    }
   };
 
   // Handle Logout — clear Firebase Auth session + Main Backend identity
@@ -256,17 +322,61 @@ export default function App() {
       {/* 1. Header Bar (Present across screens with Theme Switcher, Brand, & Profile Dropdown) */}
       <HeaderNav
         currentScreen={currentScreen}
-        onNavigate={(screen) => setCurrentScreen(screen)}
+        onNavigate={(screen) => {
+          if (!currentUser) {
+            if (screen === 'auth' || screen === 'landing') setCurrentScreen(screen);
+            return;
+          }
+          const st = resolveApplicationStatus(currentUser);
+          if (st !== 'approved') {
+            // Not applied / pending / rejected — no platform screens
+            if (st === 'rejected') setCurrentScreen('rejected');
+            else if (currentUser.applicationStatus === 'pending' || currentUser.applicationSubmittedAt) {
+              setCurrentScreen('pending');
+            } else setCurrentScreen('apply');
+            return;
+          }
+          // Approved: explore/dashboard/onboarding allowed even if profile incomplete
+          setCurrentScreen(screen as any);
+        }}
         currentUser={currentUser}
         onLogout={handleLogout}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenThemes={() => setIsThemesOpen(true)}
-        onOpenAssistant={() => setIsAssistantOpen(true)}
+        onOpenAssistant={() => {
+          if (canInteract(currentUser)) setIsAssistantOpen(true);
+          else if (isApproved(currentUser) && !currentUser?.profileCompleted) {
+            setCurrentScreen('onboarding');
+          }
+        }}
         onOpenMessenger={(connectionId) => {
+          if (!canInteract(currentUser)) {
+            if (isApproved(currentUser) && !currentUser?.profileCompleted) {
+              setCurrentScreen('onboarding');
+            }
+            return;
+          }
           setMessengerConnectionId(connectionId || null);
           setIsMessengerOpen(true);
         }}
       />
+
+      
+      {currentUser && isApproved(currentUser) && !currentUser.profileCompleted &&
+        (currentScreen === 'explore' || currentScreen === 'dashboard') && (
+        <div className="border-b border-[var(--accent-amber)]/30 bg-[var(--accent-amber)]/10 px-4 py-2.5 text-center">
+          <p className="text-xs text-[var(--text-primary)]">
+            Your application is approved. Complete your basic profile to message, collaborate, and post.
+            <button
+              type="button"
+              className="ml-2 font-bold text-[var(--accent-amber)] underline"
+              onClick={() => setCurrentScreen('onboarding')}
+            >
+              Continue profile setup
+            </button>
+          </p>
+        </div>
+      )}
 
       {/* Main View Router */}
       <main className="flex-1">
@@ -276,14 +386,31 @@ export default function App() {
           <LandingPage
             currentUser={currentUser}
             onGetStarted={() => {
-              if (currentUser) {
+              if (!currentUser) {
+                setCurrentScreen('auth');
+                return;
+              }
+              const st = resolveApplicationStatus(currentUser);
+              if (st === 'rejected') setCurrentScreen('rejected');
+              else if (st === 'pending') {
+                if (currentUser.applicationStatus === 'pending' || currentUser.applicationSubmittedAt) {
+                  setCurrentScreen('pending');
+                } else setCurrentScreen('apply');
+              } else if (!currentUser.profileCompleted) {
                 setCurrentScreen('onboarding');
               } else {
-                setCurrentScreen('auth');
+                setCurrentScreen('dashboard');
               }
             }}
             onExploreDemo={() => {
-              setCurrentScreen('explore');
+              // Explore only after approval (or public demo if you keep guest — require approved)
+              if (currentUser && isApproved(currentUser)) {
+                setCurrentScreen('explore');
+              } else if (currentUser) {
+                routeAfterAuth(currentUser);
+              } else {
+                setCurrentScreen('auth');
+              }
             }}
             onUpdateProfile={() => {
               setCurrentScreen('onboarding');
@@ -300,13 +427,28 @@ export default function App() {
         )}
 
         {/* Screen 3: ONBOARDING / PROFILE SETUP PAGE ("Making Profile") */}
-        {currentScreen === 'onboarding' && currentUser && (
+        {(currentScreen === 'apply' || currentScreen === 'pending' || currentScreen === 'rejected') && currentUser && (
+          <ApplyJoinScreen
+            user={currentUser}
+            mode={currentScreen === 'apply' ? 'apply' : currentScreen === 'pending' ? 'pending' : 'rejected'}
+            onSubmitted={(updated) => {
+              setCurrentUser(updated);
+              setCurrentScreen('pending');
+            }}
+            onLogout={handleLogout}
+          />
+        )}
+
+        {currentScreen === 'onboarding' && currentUser && resolveApplicationStatus(currentUser) === 'approved' && (
           <ProfileSetupScreen
             initialProfile={currentUser}
             onProfileSaved={handleProfileSaved}
             onCancel={() => {
               if (currentUser.profileCompleted) {
                 setCurrentScreen('dashboard');
+              } else if (isApproved(currentUser)) {
+                // Approved but incomplete: can browse Explore, not full interact
+                setCurrentScreen('explore');
               } else {
                 setCurrentScreen('landing');
               }
@@ -315,7 +457,7 @@ export default function App() {
         )}
 
         {/* Screen 4: MAIN DASHBOARD (User App View - Relevant People / Matches Feed) */}
-        {currentScreen === 'dashboard' && currentUser && (
+        {currentScreen === 'dashboard' && currentUser && isApproved(currentUser) && (
           <MainDashboardScreen
             currentUser={currentUser}
             onEditProfile={() => setCurrentScreen('onboarding')}
@@ -333,11 +475,11 @@ export default function App() {
         )}
 
         {/* Screen 5: EXPLORE CORE (Dedicated work, project, task, and guild discovery) */}
-        {currentScreen === 'explore' && (
+        {currentScreen === 'explore' && currentUser && isApproved(currentUser) && (
           <ExploreScreen
             onOpenMessenger={(connectionId) => {
               setMessengerConnectionId(connectionId || null);
-              setIsMessengerOpen(true);
+              if (canInteract(currentUser)) setIsMessengerOpen(true);
             }}
             currentUser={currentUser}
             onNavigateToOnboarding={() => {
@@ -386,6 +528,23 @@ export default function App() {
           setCurrentScreen('explore');
         }}
       />
+
+      {/* Admin applications (admin email only) */}
+      {adminAppsOpen && currentUser && isAdminEmail(currentUser.email) && (
+        <AdminApplicationsPanel
+          admin={currentUser}
+          onClose={() => setAdminAppsOpen(false)}
+        />
+      )}
+      {currentUser && isAdminEmail(currentUser.email) && currentScreen === 'dashboard' && (
+        <button
+          type="button"
+          onClick={() => setAdminAppsOpen(true)}
+          className="fixed bottom-4 left-4 z-40 rounded-full border border-[var(--card-border)] bg-[var(--card-bg)] px-3 py-2 text-[10px] font-mono font-semibold text-[var(--text-muted)] shadow-md hover:text-[var(--text-primary)]"
+        >
+          Admin · Applications
+        </button>
+      )}
 
       {/* Settings Modal */}
       {currentUser && (
@@ -440,7 +599,7 @@ export default function App() {
       )}
 
       {/* Messenger (post-connection real-time chat) */}
-      {currentUser && (
+      {currentUser && canInteract(currentUser) && (
         <MessengerDrawer
           isOpen={isMessengerOpen}
           onClose={() => {
