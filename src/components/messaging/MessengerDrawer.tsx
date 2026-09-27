@@ -279,7 +279,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                           if (n <= 0 || c.id === selectedId) return null;
                           return (
                             <span
-                              className="shrink-0 max-w-[7.5rem] px-1.5 py-0.5 rounded-full bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] text-[9px] font-bold leading-tight text-center"
+                              className="shrink-0 max-w-[7.5rem] px-1.5 py-0.5 rounded-full bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] text-[9px] font-bold leading-tight text-center"
                               aria-label={`${n} new messages`}
                               title={`${n} new messages`}
                             >
@@ -337,7 +337,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                       className={`px-3 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-colors cursor-pointer shadow-sm ${
                         selected.collaborateRequestedBy?.includes(currentUser.id)
                           ? 'bg-[var(--card-inner-bg)] text-[var(--text-muted)] border border-[var(--card-inner-border)] cursor-not-allowed'
-                          : 'bg-[var(--accent-amber)] text-[#181614] hover:opacity-90'
+                          : 'bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] hover:opacity-90'
                       }`}
                     >
                       {selected.collaborateRequestedBy?.includes(currentUser.id)

@@ -21,7 +21,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   onExploreMatches,
 }) => {
   return (
-    <div className="text-[var(--text-primary)] selection:bg-[var(--accent-amber)] selection:text-white pb-20">
+    <div className="text-[var(--text-primary)] selection:bg-[var(--accent-amber)] selection:text-[var(--text-primary)] pb-20">
       {/* Top Hero Section (Meridian Editorial Luxury) */}
       <div className="relative overflow-hidden pt-10 sm:pt-16 pb-12">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-6">
@@ -89,7 +89,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6 border-b border-[var(--card-inner-border)] pb-5">
             <div>
               <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--accent-amber)]/20 text-[var(--accent-amber)] uppercase tracking-wider">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[color-mix(in_srgb,var(--accent-amber)_20%,transparent)] text-[var(--accent-amber)] uppercase tracking-wider">
                   Live Match Simulation
                 </span>
                 <span className="text-xs text-[var(--text-muted)] font-mono">

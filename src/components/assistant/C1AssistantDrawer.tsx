@@ -312,7 +312,7 @@ export const C1AssistantDrawer: React.FC<C1AssistantDrawerProps> = ({
                 className={`flex gap-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 {msg.sender === 'assistant' && (
-                  <div className="w-7 h-7 rounded-xl bg-[var(--accent-amber)]/20 border border-[var(--accent-amber)]/40 text-[var(--accent-amber)] flex items-center justify-center shrink-0 mt-0.5">
+                  <div className="w-7 h-7 rounded-xl bg-[color-mix(in_srgb,var(--accent-amber)_20%,transparent)] border border-[color-mix(in_srgb,var(--accent-amber)_40%,transparent)] text-[var(--accent-amber)] flex items-center justify-center shrink-0 mt-0.5">
                     <Bot className="w-3.5 h-3.5" />
                   </div>
                 )}
@@ -393,7 +393,7 @@ export const C1AssistantDrawer: React.FC<C1AssistantDrawerProps> = ({
                         <button
                           key={idx}
                           onClick={() => handleActionClick(action)}
-                          className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-[var(--card-inner-bg)] hover:bg-[var(--accent-amber)]/15 border border-[var(--card-inner-border)] hover:border-[var(--accent-amber)]/40 text-[11px] font-semibold text-[var(--text-primary)] hover:text-[var(--accent-amber)] transition-all cursor-pointer"
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-[var(--card-inner-bg)] hover:bg-[color-mix(in_srgb,var(--accent-amber)_15%,transparent)] border border-[var(--card-inner-border)] hover:border-[color-mix(in_srgb,var(--accent-amber)_40%,transparent)] text-[11px] font-semibold text-[var(--text-primary)] hover:text-[var(--accent-amber)] transition-all cursor-pointer"
                         >
                           <span>{action.label}</span>
                           <ExternalLink className="w-2.5 h-2.5" />
@@ -408,7 +408,7 @@ export const C1AssistantDrawer: React.FC<C1AssistantDrawerProps> = ({
             {/* Thinking indicator */}
             {loading && (
               <div className="flex gap-3 justify-start">
-                <div className="w-7 h-7 rounded-xl bg-[var(--accent-amber)]/20 border border-[var(--accent-amber)]/40 text-[var(--accent-amber)] flex items-center justify-center shrink-0 mt-0.5 animate-pulse">
+                <div className="w-7 h-7 rounded-xl bg-[color-mix(in_srgb,var(--accent-amber)_20%,transparent)] border border-[color-mix(in_srgb,var(--accent-amber)_40%,transparent)] text-[var(--accent-amber)] flex items-center justify-center shrink-0 mt-0.5 animate-pulse">
                   <Bot className="w-3.5 h-3.5" />
                 </div>
                 <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] flex items-center gap-2 text-xs text-[var(--text-secondary)]">

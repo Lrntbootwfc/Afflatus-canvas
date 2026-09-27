@@ -16,6 +16,7 @@ import {
   RefreshCw,
   CheckCircle2,
   X,
+  Plus,
 } from 'lucide-react';
 import type {
   ExploreFeedResponse,
@@ -44,6 +45,7 @@ import {
   getProfileFromFirestore,
 } from '../../lib/firebase';
 import { GlobalPostsFeed } from '../feed/GlobalPostsFeed';
+import { CreatePostInput } from '../feed/CreatePostInput';
 
 interface ExploreScreenProps {
   currentUser: CreatorProfile | null;
@@ -92,6 +94,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
 
   // Post creation modal
   const [feedRefreshTrigger, setFeedRefreshTrigger] = useState(0);
+  const [isCreatePostModalOpen, setIsCreatePostModalOpen] = useState(false);
 
   // Selected modals
   const [selectedWork, setSelectedWork] = useState<WorkShowcase | null>(null);
@@ -390,7 +393,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
               setSearchQuery('');
               setSelectedCategory('all');
             }}
-            className="px-5 py-2.5 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-md inline-flex items-center gap-1.5 cursor-pointer"
+            className="px-5 py-2.5 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--btn-on-accent,#14100C)] shadow-md inline-flex items-center gap-1.5 cursor-pointer"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Reset Search &amp; Filters</span>
@@ -476,6 +479,19 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             Explore Projects
           </button>
         </div>
+
+        {mainTab === 'feed' && currentUser && (
+          <button
+            type="button"
+            onClick={() => {
+              handleGatedAction('Create a post', () => setIsCreatePostModalOpen(true));
+            }}
+            className="amber-pill-btn inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold shadow-sm cursor-pointer shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Create Post
+          </button>
+        )}
 
       </div>
 
@@ -877,6 +893,38 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
           handleConnectCreator(creator as ExploreCreatorItem);
         }}
       />
+
+
+      {/* Create Post modal — Explore Projects only; gated by profile completion */}
+      {isCreatePostModalOpen && currentUser && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setIsCreatePostModalOpen(false)}
+            aria-hidden
+          />
+          <div className="relative z-[81] w-full max-w-lg rounded-3xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-2xl p-4 sm:p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-[var(--text-primary)]">Create Post</h3>
+              <button
+                type="button"
+                onClick={() => setIsCreatePostModalOpen(false)}
+                className="p-1.5 rounded-full text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)] cursor-pointer"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <CreatePostInput
+              currentUser={currentUser}
+              onPostCreated={() => {
+                setIsCreatePostModalOpen(false);
+                setFeedRefreshTrigger((n) => n + 1);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* 6. Gated Action Notification Modal */}
       <GatedActionNoticeModal

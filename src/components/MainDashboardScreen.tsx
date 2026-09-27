@@ -406,7 +406,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-4 border-b border-[var(--card-border)]">
         <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
           <div className="bg-[var(--card-inner-bg)] px-4 py-2 rounded-2xl border border-[var(--card-inner-border)] flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-[var(--accent-amber)]/20 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-[color-mix(in_srgb,var(--accent-amber)_20%,transparent)] flex items-center justify-center">
               <Sparkles className="w-4 h-4 text-[var(--accent-amber)]" />
             </div>
             <div>
@@ -464,7 +464,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
                       key={c.id}
                       className={`flex items-center gap-1 rounded-xl ${
                         conversationId === c.id
-                          ? 'bg-[var(--accent-amber)]/15 border border-[var(--accent-amber)]/30'
+                          ? 'bg-[color-mix(in_srgb,var(--accent-amber)_15%,transparent)] border border-[color-mix(in_srgb,var(--accent-amber)_30%,transparent)]'
                           : 'hover:bg-[var(--card-inner-bg)]'
                       }`}
                     >

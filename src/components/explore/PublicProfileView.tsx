@@ -318,7 +318,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
               <button
                 id={`header-connect-btn-${creator.id}`}
                 onClick={handleInitiateConnect}
-                className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all"
+                className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--btn-on-accent,#14100C)] shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all"
               >
                 <Send className="w-3.5 h-3.5" />
                 <span>Connect / Collaborate</span>
@@ -326,7 +326,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
             ) : connectionStatus === 'accepted' ? (
               <button
                 onClick={handleStartCollaboration}
-                className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all"
+                className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--btn-on-accent,#14100C)] shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all"
               >
                 <span>Start Collaboration</span>
               </button>
@@ -357,7 +357,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
           <p className="text-sm text-[var(--text-secondary)]">{error}</p>
           <button
             onClick={onBack}
-            className="px-5 py-2.5 rounded-full text-xs font-bold bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)]"
+            className="px-5 py-2.5 rounded-full text-xs font-bold bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)]"
           >
             Return to Explore
           </button>
@@ -408,7 +408,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                       size="xl"
                       className="w-24 h-24 sm:w-28 sm:h-28 ring-4 ring-[var(--card-bg,#1e1c19)] shadow-2xl rounded-3xl"
                     />
-                    <div className="absolute -bottom-1 -right-1 p-1.5 rounded-full bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] shadow-md">
+                    <div className="absolute -bottom-1 -right-1 p-1.5 rounded-full bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] shadow-md">
                       <ShieldCheck className="w-4 h-4" />
                     </div>
                   </div>
@@ -453,7 +453,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                       <button
                         id={`connect-profile-btn-${creator.id}`}
                         onClick={handleInitiateConnect}
-                        className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-lg inline-flex items-center justify-center gap-2 cursor-pointer transition-all"
+                        className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--btn-on-accent,#14100C)] shadow-lg inline-flex items-center justify-center gap-2 cursor-pointer transition-all"
                       >
                         <Send className="w-4 h-4" />
                         <span>Connect / Collaborate</span>
@@ -461,7 +461,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                     ) : connectionStatus === 'accepted' ? (
                       <button
                         onClick={handleStartCollaboration}
-                        className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-lg inline-flex items-center justify-center gap-2 cursor-pointer transition-all"
+                        className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--btn-on-accent,#14100C)] shadow-lg inline-flex items-center justify-center gap-2 cursor-pointer transition-all"
                       >
                         <Sparkles className="w-4 h-4" />
                         <span>Start Collaboration</span>
@@ -528,7 +528,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
               onClick={() => setActiveTab('works')}
               className={`px-4 py-2 rounded-full text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shrink-0 ${
                 activeTab === 'works'
-                  ? 'bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)]'
+                  ? 'bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)]'
                   : 'text-[var(--text-secondary)] hover:bg-[var(--card-inner-bg)]'
               }`}
             >
@@ -540,7 +540,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
               onClick={() => setActiveTab('posts')}
               className={`px-4 py-2 rounded-full text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shrink-0 ${
                 activeTab === 'posts'
-                  ? 'bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)]'
+                  ? 'bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)]'
                   : 'text-[var(--text-secondary)] hover:bg-[var(--card-inner-bg)]'
               }`}
             >
@@ -552,7 +552,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
               onClick={() => setActiveTab('projects')}
               className={`px-4 py-2 rounded-full text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shrink-0 ${
                 activeTab === 'projects'
-                  ? 'bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)]'
+                  ? 'bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)]'
                   : 'text-[var(--text-secondary)] hover:bg-[var(--card-inner-bg)]'
               }`}
             >
@@ -564,7 +564,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
               onClick={() => setActiveTab('about')}
               className={`px-4 py-2 rounded-full text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shrink-0 ${
                 activeTab === 'about'
-                  ? 'bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)]'
+                  ? 'bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)]'
                   : 'text-[var(--text-secondary)] hover:bg-[var(--card-inner-bg)]'
               }`}
             >
@@ -577,7 +577,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 onClick={() => setActiveTab('gear')}
                 className={`px-4 py-2 rounded-full text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shrink-0 ${
                   activeTab === 'gear'
-                    ? 'bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)]'
+                    ? 'bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)]'
                     : 'text-[var(--text-secondary)] hover:bg-[var(--card-inner-bg)]'
                 }`}
               >
@@ -945,7 +945,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 id="confirm-send-proposal-btn"
                 onClick={handleSendProposal}
                 disabled={isSubmittingConnect || !connectMessage.trim()}
-                className="px-5 py-2.5 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--nav-item-active-text,#181614)] shadow-md inline-flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                className="px-5 py-2.5 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--btn-on-accent,#14100C)] shadow-md inline-flex items-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {isSubmittingConnect ? (
                   <>

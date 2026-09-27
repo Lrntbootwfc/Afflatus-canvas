@@ -142,7 +142,7 @@ export const PostCard: React.FC<PostCardProps> = ({
   const category = post.authorRole || 'Post';
 
   return (
-    <article className="group flex flex-col overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-sm transition-all duration-300 hover:border-[var(--accent-amber)]/35 hover:shadow-md">
+    <article className="group flex flex-col overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-sm transition-all duration-300 hover:border-[color-mix(in_srgb,var(--accent-amber)_35%,transparent)] hover:shadow-md">
       {/* Media — dominant, shorter aspect */}
       <div
         className="relative aspect-[4/3] w-full cursor-pointer overflow-hidden bg-[var(--card-inner-bg)]"

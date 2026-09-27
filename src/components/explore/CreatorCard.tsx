@@ -169,7 +169,7 @@ export const CreatorCard: React.FC<CreatorCardProps> = ({
           </div>
 
           <div className="mt-3 flex flex-wrap gap-1.5">
-            <span className="rounded-full border border-[var(--accent-amber)]/35 bg-[var(--accent-amber)]/10 px-2.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wide text-[var(--accent-amber)]">
+            <span className="rounded-full border border-[color-mix(in_srgb,var(--accent-amber)_35%,transparent)] bg-[color-mix(in_srgb,var(--accent-amber)_10%,transparent)] px-2.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wide text-[var(--accent-amber)]">
               {creator.primaryRole || 'Creator'}
             </span>
             {secondary.map((role) => (
@@ -264,7 +264,7 @@ export const CreatorCard: React.FC<CreatorCardProps> = ({
                       disabled={!myUid || busy}
                       className={`absolute bottom-2.5 right-2.5 flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-mono shadow-sm backdrop-blur-md transition-colors ${
                         liked
-                          ? 'border-[var(--accent-amber)]/40 bg-[var(--accent-amber)]/15 text-[var(--accent-amber)]'
+                          ? 'border-[color-mix(in_srgb,var(--accent-amber)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent-amber)_15%,transparent)] text-[var(--accent-amber)]'
                           : 'border-[var(--card-border)] bg-[var(--card-bg)]/90 text-[var(--text-muted)] hover:text-[var(--accent-amber)]'
                       }`}
                       aria-label={liked ? 'Unlike' : 'Like'}

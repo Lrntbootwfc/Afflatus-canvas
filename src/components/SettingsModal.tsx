@@ -81,7 +81,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Modal Header */}
         <div className="flex items-center justify-between pb-4 border-b border-[var(--card-border)]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-[var(--accent-amber)]/10 text-[var(--accent-amber)] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl bg-[color-mix(in_srgb,var(--accent-amber)_10%,transparent)] text-[var(--accent-amber)] flex items-center justify-center">
               <Settings className="w-4 h-4" />
             </div>
             <div>
@@ -107,7 +107,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Quick Theme Shortcut Card */}
           <div className="p-4 rounded-2xl bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-[var(--accent-amber)]/15 text-[var(--accent-amber)] flex items-center justify-center">
+              <div className="w-9 h-9 rounded-xl bg-[color-mix(in_srgb,var(--accent-amber)_15%,transparent)] text-[var(--accent-amber)] flex items-center justify-center">
                 <Palette className="w-4 h-4" />
               </div>
               <div>

@@ -121,7 +121,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
       <div className="card-obsidian rounded-3xl max-w-md w-full p-6 sm:p-7 space-y-5 shadow-2xl relative overflow-hidden border border-[var(--card-border)]">
         {/* Accent Corner Glow */}
-        <div className="absolute top-0 right-1/4 w-36 h-36 bg-[var(--accent-amber)]/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-0 right-1/4 w-36 h-36 bg-[color-mix(in_srgb,var(--accent-amber)_15%,transparent)] rounded-full blur-3xl pointer-events-none" />
 
         {/* Modal Header */}
         <div className="flex items-start justify-between relative z-10">
@@ -205,7 +205,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="text-xs font-bold text-[var(--text-primary)]">{currentUser.name}</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-[var(--accent-amber)]/20 text-[var(--accent-amber)]">
+                <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-[color-mix(in_srgb,var(--accent-amber)_20%,transparent)] text-[var(--accent-amber)]">
                   {currentUser.primaryRole}
                 </span>
               </div>

@@ -21,7 +21,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onUpdateProfile,
 }) => {
   return (
-    <div className="text-[var(--text-primary)] selection:bg-[var(--accent-amber)] selection:text-white">
+    <div className="text-[var(--text-primary)] selection:bg-[var(--accent-amber)] selection:text-[var(--text-primary)]">
       {/* 1. Hero Section with Cinematic Motion Moment */}
       <HeroSection
         onGetStarted={onGetStarted}

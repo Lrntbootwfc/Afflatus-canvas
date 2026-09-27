@@ -184,7 +184,7 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({
                 <li key={n.id}>
                   <div
                     className={`w-full text-left px-4 py-3 flex gap-2.5 border-b border-[var(--card-border)] last:border-0 ${
-                      !n.read ? 'bg-[var(--accent-amber)]/5' : ''
+                      !n.read ? 'bg-[color-mix(in_srgb,var(--accent-amber)_5%,transparent)]' : ''
                     }`}
                   >
                     <div className="mt-0.5 shrink-0">{iconFor(n.type)}</div>

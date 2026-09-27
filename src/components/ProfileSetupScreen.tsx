@@ -335,7 +335,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 selection:bg-[var(--accent-amber)] selection:text-white pb-24">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 selection:bg-[var(--accent-amber)] selection:text-[var(--text-primary)] pb-24">
       
       {/* Top Header */}
       <div className="mb-8 text-left space-y-2">
@@ -987,7 +987,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
             <button
               type="button"
               onClick={() => setIsPortfolioPickerOpen(true)}
-              className="px-3 py-1.5 rounded-full text-xs font-semibold bg-[var(--card-inner-bg)] hover:bg-[var(--accent-amber)]/10 text-[var(--text-primary)] border border-[var(--card-inner-border)] flex items-center gap-1 cursor-pointer transition-colors"
+              className="px-3 py-1.5 rounded-full text-xs font-semibold bg-[var(--card-inner-bg)] hover:bg-[color-mix(in_srgb,var(--accent-amber)_10%,transparent)] text-[var(--text-primary)] border border-[var(--card-inner-border)] flex items-center gap-1 cursor-pointer transition-colors"
             >
               <Plus className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
               <span>Upload Image</span>
@@ -1030,7 +1030,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
             <button
               type="button"
               onClick={addWorkLink}
-              className="px-3 py-1.5 rounded-full text-xs font-semibold bg-[var(--card-inner-bg)] hover:bg-[var(--accent-amber)]/10 text-[var(--text-primary)] border border-[var(--card-inner-border)] flex items-center gap-1 cursor-pointer transition-colors"
+              className="px-3 py-1.5 rounded-full text-xs font-semibold bg-[var(--card-inner-bg)] hover:bg-[color-mix(in_srgb,var(--accent-amber)_10%,transparent)] text-[var(--text-primary)] border border-[var(--card-inner-border)] flex items-center gap-1 cursor-pointer transition-colors"
             >
               <Plus className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
               <span>Add Link</span>

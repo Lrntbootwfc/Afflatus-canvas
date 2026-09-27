@@ -291,7 +291,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   };
 
   return (
-    <div className="min-h-[85vh] flex items-center justify-center px-4 sm:px-6 lg:px-8 py-10 selection:bg-[#E58B13] selection:text-white">
+    <div className="min-h-[85vh] flex items-center justify-center px-4 sm:px-6 lg:px-8 py-10 selection:bg-[var(--accent-amber)] selection:text-[var(--text-primary)]">
       <div className="max-w-md w-full space-y-6">
         
         {/* Card Container */}
@@ -402,7 +402,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                       required
                       className={`w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl ${
                         loginMethod === 'username' ? 'pl-8' : 'pl-10'
-                      } pr-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[#E58B13] transition-colors`}
+                      } pr-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] transition-colors`}
                     />
                   </div>
                 </div>
@@ -425,7 +425,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
                       required
-                      className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-10 pr-10 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[#E58B13] transition-colors"
+                      className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-10 pr-10 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] transition-colors"
                     />
                     <button
                       type="button"
@@ -441,7 +441,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   type="submit"
                   id="btn-submit-login"
                   disabled={isLoading}
-                  className="amber-pill-btn w-full py-3 rounded-full text-xs font-bold shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                  className="amber-pill-btn w-full py-3 rounded-full text-xs font-bold shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98 text-[var(--nav-item-active-text,#181614)]"
                 >
                   {isLoading ? (
                     <span className="animate-pulse">Authenticating...</span>
@@ -460,8 +460,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           {authMode === 'signup' && (
             <form onSubmit={handleRequestOtpSignup} className="space-y-4">
               
-              <div className="p-3 bg-[#E58B13]/10 border border-[#E58B13]/30 rounded-2xl text-[11px] text-[var(--text-primary)] flex items-start gap-2">
-                <Sparkles className="w-4 h-4 text-[#E58B13] shrink-0 mt-0.5" />
+              <div className="p-3 bg-[color-mix(in_srgb,var(--accent-amber)_10%,transparent)] border border-[color-mix(in_srgb,var(--accent-amber)_30%,transparent)] rounded-2xl text-[11px] text-[var(--text-primary)] flex items-start gap-2">
+                <Sparkles className="w-4 h-4 text-[var(--accent-amber)] shrink-0 mt-0.5" />
                 <span>
                   <strong>Real OTP Verification:</strong> We'll send a 6-digit confirmation code to verify your creator email address.
                 </span>
@@ -486,7 +486,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     }}
                     placeholder="e.g. Maya Chen"
                     required
-                    className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-10 pr-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[#E58B13]"
+                    className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-10 pr-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
                   />
                 </div>
               </div>
@@ -497,7 +497,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   Create Unique Username *
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3.5 top-2.5 text-xs text-[#E58B13] font-mono font-bold">@</span>
+                  <span className="absolute left-3.5 top-2.5 text-xs text-[var(--accent-amber)] font-mono font-bold">@</span>
                   <input
                     id="input-signup-username"
                     type="text"
@@ -505,7 +505,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     onChange={(e) => setSignupUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
                     placeholder="maya_chen_films"
                     required
-                    className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-8 pr-3.5 py-2.5 text-xs font-mono text-[var(--input-text)] focus:outline-none focus:border-[#E58B13]"
+                    className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-8 pr-3.5 py-2.5 text-xs font-mono text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
                   />
                 </div>
               </div>
@@ -524,7 +524,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     onChange={(e) => setSignupEmail(e.target.value)}
                     placeholder="maya@visions.net"
                     required
-                    className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-10 pr-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[#E58B13]"
+                    className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-10 pr-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
                   />
                 </div>
               </div>
@@ -538,7 +538,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   id="select-signup-role"
                   value={signupRole}
                   onChange={(e) => setSignupRole(e.target.value)}
-                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[#E58B13]"
+                  className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
                 >
                   {ROLE_CATEGORIES.map((cat) => (
                     <optgroup key={cat.category} label={`── ${cat.category} ──`}>
@@ -572,7 +572,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     }}
                     placeholder="e.g. Los Angeles, CA"
                     required
-                    className={`w-full bg-[var(--input-bg)] border ${locationError ? 'border-red-500' : 'border-[var(--input-border)]'} rounded-2xl pl-10 pr-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[#E58B13]`}
+                    className={`w-full bg-[var(--input-bg)] border ${locationError ? 'border-red-500' : 'border-[var(--input-border)]'} rounded-2xl pl-10 pr-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]`}
                   />
                   <datalist id="signup-locations-list">
                     {POPULAR_LOCATIONS.map((loc) => (
@@ -599,7 +599,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Minimum 6 characters"
                     required
-                    className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-10 pr-10 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[#E58B13]"
+                    className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-10 pr-10 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
                   />
                   <button
                     type="button"
@@ -616,7 +616,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 type="submit"
                 id="btn-submit-signup"
                 disabled={isLoading}
-                className="amber-pill-btn w-full py-3 rounded-full text-xs font-bold shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                className="amber-pill-btn w-full py-3 rounded-full text-xs font-bold shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98 text-[var(--nav-item-active-text,#181614)]"
               >
                 {isLoading ? (
                   <span className="animate-pulse">Generating OTP Code...</span>
@@ -636,8 +636,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               
               {/* Live OTP Notification Pill for instant preview verification */}
               {receivedOtpNotice && (
-                <div className="p-3 bg-[#E58B13]/15 border border-[#E58B13]/40 rounded-2xl text-center space-y-1">
-                  <span className="text-[10px] font-bold text-[#E58B13] uppercase tracking-wider block">
+                <div className="p-3 bg-[color-mix(in_srgb,var(--accent-amber)_15%,transparent)] border border-[color-mix(in_srgb,var(--accent-amber)_40%,transparent)] rounded-2xl text-center space-y-1">
+                  <span className="text-[10px] font-bold text-[var(--accent-amber)] uppercase tracking-wider block">
                     Security Code Sent:
                   </span>
                   <div className="font-mono text-2xl font-black tracking-widest text-[var(--text-primary)]">
@@ -663,7 +663,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     placeholder="123456"
                     autoFocus
                     required
-                    className="w-full bg-[var(--input-bg)] border-2 border-[#E58B13] rounded-2xl py-3 text-center text-xl font-mono tracking-widest font-bold text-[var(--input-text)] focus:outline-none focus:ring-2 focus:ring-[#E58B13]"
+                    className="w-full bg-[var(--input-bg)] border-2 border-[var(--accent-amber)] rounded-2xl py-3 text-center text-xl font-mono tracking-widest font-bold text-[var(--input-text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-amber)]"
                   />
                 </div>
               </div>
@@ -673,7 +673,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => setOtpCode(receivedOtpNotice)}
-                  className="w-full py-1.5 text-[11px] font-mono text-[#E58B13] hover:underline cursor-pointer text-center"
+                  className="w-full py-1.5 text-[11px] font-mono text-[var(--accent-amber)] hover:underline cursor-pointer text-center"
                 >
                   ⚡ Preview verification code: {receivedOtpNotice}
                 </button>
@@ -683,7 +683,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 type="submit"
                 id="btn-verify-otp-submit"
                 disabled={isLoading}
-                className="amber-pill-btn w-full py-3 rounded-full text-xs font-bold shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                className="amber-pill-btn w-full py-3 rounded-full text-xs font-bold shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98 text-[var(--nav-item-active-text,#181614)]"
               >
                 {isLoading ? (
                   <span className="animate-pulse">Verifying Code...</span>
@@ -711,7 +711,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   type="button"
                   onClick={handleResendOtp}
                   disabled={isLoading}
-                  className="text-[#E58B13] hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                  className="text-[var(--accent-amber)] hover:underline flex items-center gap-1 cursor-pointer font-medium"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>Resend Code</span>
@@ -772,7 +772,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     setErrorMessage(null);
                     setSuccessNotice(null);
                   }}
-                  className="text-xs font-semibold text-[var(--text-secondary)] hover:text-[#E58B13] transition-colors cursor-pointer"
+                  className="text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--accent-amber)] transition-colors cursor-pointer"
                 >
                   {authMode === 'login'
                     ? "Don't have a profile yet? Create an Account"

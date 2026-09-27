@@ -28,7 +28,7 @@ export const GatedActionNoticeModal: React.FC<GatedActionNoticeModalProps> = ({
           <X className="w-5 h-5" />
         </button>
 
-        <div className="w-12 h-12 rounded-2xl bg-[var(--accent-amber)]/10 border border-[var(--accent-amber)]/30 text-[var(--accent-amber)] flex items-center justify-center mb-4">
+        <div className="w-12 h-12 rounded-2xl bg-[color-mix(in_srgb,var(--accent-amber)_10%,transparent)] border border-[color-mix(in_srgb,var(--accent-amber)_30%,transparent)] text-[var(--accent-amber)] flex items-center justify-center mb-4">
           <ShieldAlert className="w-6 h-6" />
         </div>
 
