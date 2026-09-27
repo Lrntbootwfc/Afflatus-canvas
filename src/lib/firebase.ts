@@ -1143,11 +1143,33 @@ export async function toggleCollaborationStatus(
   const both = list.length >= 2;
   const nextStatus = both ? 'collaborating' : data.status === 'pending' ? 'accepted' : data.status;
 
+  const wasCollaborating = data.status === 'collaborating' || data.status === 'completed';
+
   await updateDoc(ref, {
     collaborateRequestedBy: list,
     status: nextStatus,
     updatedAt: serverTimestamp(),
   });
+
+  // Persist collaborationCount on both profiles when collaboration first becomes active.
+  // UI reads users.collaborationCount — without this write the counter stays 0 forever.
+  if (both && nextStatus === 'collaborating' && !wasCollaborating) {
+    const bump = async (uid: string) => {
+      try {
+        const userRef = doc(db, 'users', uid);
+        const snap = await getDoc(userRef);
+        const prev = snap.exists() ? Number((snap.data() as any)?.collaborationCount) || 0 : 0;
+        await setDoc(
+          userRef,
+          { collaborationCount: prev + 1, updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+      } catch (e) {
+        console.warn('[collaborationCount] increment failed for', uid, e);
+      }
+    };
+    await Promise.all([bump(data.senderId), bump(data.recipientId)]);
+  }
 
   const peerId = data.senderId === actingUserId ? data.recipientId : data.senderId;
   try {

@@ -1,12 +1,26 @@
 /**
  * Affil Main Backend API client (Batch F).
- * All calls go through Vite proxy → Main Backend (/api).
+ * Dev: Vite proxies `/api` → localhost:3000.
+ * Prod: set VITE_MAIN_BACKEND_URL (e.g. https://api.example.com) so posts/explore
+ * hit the real engine — absolute `/api` on a static host is empty/404.
  */
 import axios from 'axios';
 
+function resolveApiBase(): string {
+  const raw = (import.meta.env.VITE_MAIN_BACKEND_URL as string | undefined)?.trim();
+  if (raw) {
+    const base = raw.replace(/\/$/, '');
+    // Allow either origin or origin already ending with /api
+    return base.endsWith('/api') ? base : `${base}/api`;
+  }
+  // Same-origin reverse proxy or Vite dev proxy
+  return '/api';
+}
+
 const client = axios.create({
-  baseURL: '/api',
+  baseURL: resolveApiBase(),
   headers: { 'Content-Type': 'application/json' },
+  timeout: 30000,
 });
 
 /** Attach identity for Main Backend (dev: user id; prod: also set Firebase Bearer) */
