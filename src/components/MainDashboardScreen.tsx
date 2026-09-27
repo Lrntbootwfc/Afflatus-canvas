@@ -284,7 +284,15 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
       }));
 
       const profileLoc = (currentUser.location || (currentUser as any).city || '').trim();
-      const res = await fetch('/api/recommendations/ai-match', {
+      
+      const rawBase = (import.meta.env.VITE_MAIN_BACKEND_URL as string | undefined)?.trim();
+      const apiBase = rawBase
+        ? (rawBase.replace(/\/$/, '').endsWith('/api')
+            ? rawBase.replace(/\/$/, '')
+            : `${rawBase.replace(/\/$/, '')}/api`)
+        : '/api';
+      
+      const res = await fetch(`${apiBase}/recommendations/ai-match`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
