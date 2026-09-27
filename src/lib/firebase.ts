@@ -1275,6 +1275,42 @@ export async function sendMessage(params: {
   if (!current || current.uid !== params.senderId) {
     throw new Error('You must be signed in to send messages.');
   }
+  // Profile must be complete to message
+  try {
+    const me = await getDoc(doc(db, 'users', current.uid));
+    if (!me.exists() || !(me.data() as any)?.profileCompleted) {
+      throw new Error('Complete your profile before messaging.');
+    }
+  } catch (e: any) {
+    if (String(e?.message || '').includes('Complete your profile')) throw e;
+  }
+  // Only accepted / collaborating / completed connections are "connected".
+  // Pending connection or message_request is not a normal chat yet.
+  try {
+    const connSnap = await getDoc(doc(db, 'connections', params.connectionId));
+    if (!connSnap.exists()) {
+      throw new Error('Connection not found. Send a message request first.');
+    }
+    const conn = connSnap.data() as ConnectionRequest;
+    const st = String(conn.status || '');
+    if (st !== 'accepted' && st !== 'collaborating' && st !== 'completed') {
+      throw new Error(
+        'This conversation is still a request. Messaging unlocks after the recipient accepts.'
+      );
+    }
+    if (conn.senderId !== current.uid && conn.recipientId !== current.uid) {
+      throw new Error('You are not part of this connection.');
+    }
+  } catch (e: any) {
+    if (
+      String(e?.message || '').includes('still a request') ||
+      String(e?.message || '').includes('not found') ||
+      String(e?.message || '').includes('not part')
+    ) {
+      throw e;
+    }
+    console.warn('[sendMessage] connection check:', e?.message || e);
+  }
   const trimmed = (params.text || '').trim();
   if (!trimmed && !params.sharedPost) throw new Error('Message cannot be empty.');
 

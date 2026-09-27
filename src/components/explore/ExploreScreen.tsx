@@ -15,7 +15,6 @@ import {
   ShieldCheck,
   RefreshCw,
   CheckCircle2,
-  Plus,
   X,
 } from 'lucide-react';
 import type {
@@ -45,7 +44,6 @@ import {
   getProfileFromFirestore,
 } from '../../lib/firebase';
 import { GlobalPostsFeed } from '../feed/GlobalPostsFeed';
-import { CreatePostInput } from '../feed/CreatePostInput';
 
 interface ExploreScreenProps {
   currentUser: CreatorProfile | null;
@@ -93,7 +91,6 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   // Post creation modal
-  const [isCreatePostModalOpen, setIsCreatePostModalOpen] = useState(false);
   const [feedRefreshTrigger, setFeedRefreshTrigger] = useState(0);
 
   // Selected modals
@@ -480,15 +477,6 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
           </button>
         </div>
 
-        {currentUser && mainTab === 'feed' && currentUser.profileCompleted && (
-          <button
-            onClick={() => setIsCreatePostModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-[var(--accent-amber)] hover:bg-[#e69c1e] text-black font-bold rounded-full transition-colors text-sm shrink-0"
-          >
-            <Plus size={16} />
-            <span className="hidden sm:inline">Create Post</span>
-          </button>
-        )}
       </div>
 
       {/* 3. Search Toolbar (only for 'explore' tab) */}
@@ -920,31 +908,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
         </div>
       )}
 
-      {/* 8. Create Post Modal */}
-      {isCreatePostModalOpen && currentUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-[var(--app-bg)] w-full max-w-xl rounded-3xl overflow-hidden shadow-2xl relative border border-[var(--card-border)]">
-            <button 
-              onClick={() => setIsCreatePostModalOpen(false)}
-              className="absolute top-4 right-4 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors z-10"
-            >
-              <X size={20} />
-            </button>
-            <div className="p-6 pb-2 border-b border-[var(--card-border)] bg-[var(--card-bg)]">
-              <h2 className="text-xl font-bold font-editorial">Create New Post</h2>
-            </div>
-            <div className="p-6 bg-[var(--app-bg)]">
-              <CreatePostInput 
-                currentUser={currentUser} 
-                onPostCreated={() => {
-                  setIsCreatePostModalOpen(false);
-                  setFeedRefreshTrigger(prev => prev + 1);
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      
     </div>
   );
 };

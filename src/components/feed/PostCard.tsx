@@ -13,6 +13,11 @@ interface PostCardProps {
   currentUser?: CreatorProfile | null;
   onOpenMessenger?: (connectionId: string) => void;
   onOpenPost?: (postId: string) => void;
+  /**
+   * When false (default), Like/Share actions are disabled but existing
+   * reaction counts remain visible (view-only).
+   */
+  allowReactions?: boolean;
 }
 
 export const PostCard: React.FC<PostCardProps> = ({
@@ -22,6 +27,7 @@ export const PostCard: React.FC<PostCardProps> = ({
   onOpenMessenger,
   onOpenPost,
   onDeleted,
+  allowReactions = false,
 }) => {
   const [likes, setLikes] = useState<string[]>(post.likes || []);
   const [isLiking, setIsLiking] = useState(false);
@@ -42,6 +48,8 @@ export const PostCard: React.FC<PostCardProps> = ({
   if (isDeleted) return null;
 
   const handleLike = async () => {
+    // Req: view reaction counts only — do not create likes
+    if (!allowReactions) return;
     if (isLiking || !currentUserId) return;
     setIsLiking(true);
     if (hasLiked) setLikes(likes.filter((id) => id !== currentUserId));
@@ -84,6 +92,7 @@ export const PostCard: React.FC<PostCardProps> = ({
   };
 
   const handleShareToAfflatus = async () => {
+    if (!allowReactions) return;
     setShareMenuOpen(false);
     if (!currentUserId) {
       alert('Sign in to share to Afflatus');
@@ -266,7 +275,7 @@ export const PostCard: React.FC<PostCardProps> = ({
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setShareMenuOpen((v) => !v)}
+                  onClick={() => { if (!allowReactions) return; setShareMenuOpen((v) => !v); }}
                   className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                   aria-label="Share"
                 >
@@ -387,7 +396,7 @@ export const PostCard: React.FC<PostCardProps> = ({
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setShareMenuOpen((v) => !v)}
+                  onClick={() => { if (!allowReactions) return; setShareMenuOpen((v) => !v); }}
                   className="flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                 >
                   <Share2 size={18} />

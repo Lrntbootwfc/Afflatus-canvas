@@ -45,7 +45,7 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({
   const [connStatusById, setConnStatusById] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (!currentUser?.id) return;
+    if (!currentUser?.id || !isOpen) return;
     setLoading(true);
     const unsub = subscribeToNotifications(
       currentUser.id,
@@ -68,7 +68,7 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({
       })
       .catch(() => {});
     return () => unsub();
-  }, [currentUser?.id]);
+  }, [currentUser?.id, isOpen]);
 
   const iconFor = (type: AppNotification['type']) => {
     if (type === 'message') return <MessageSquare className="w-3.5 h-3.5 text-[var(--accent-amber)]" />;
@@ -135,7 +135,7 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({
         <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--card-border)]">
           <div className="flex items-center gap-2">
             <Bell className="w-4 h-4 text-[var(--accent-amber)]" />
-            <span className="text-sm font-bold text-[var(--text-primary)]">Notifications</span>
+            <span className="text-sm font-bold text-[var(--text-primary)]">Network</span>
             {unreadCount > 0 && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--accent-amber)] text-[#181614]">
                 {unreadCount}
@@ -176,7 +176,7 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({
             </div>
           ) : items.length === 0 ? (
             <div className="py-10 px-4 text-center">
-              <p className="text-xs text-[var(--text-muted)]">No notifications yet.</p>
+              <p className="text-xs text-[var(--text-muted)]">No network activity yet.</p>
             </div>
           ) : (
             <ul>

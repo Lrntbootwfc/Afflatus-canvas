@@ -63,6 +63,11 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
     if (!isOpen) return;
     setLoadingList(true);
     setError(null);
+    // Reset selection when opening Messages without a target chat
+    if (!initialConnectionId) {
+      setSelectedId(null);
+      setMessages([]);
+    }
     let cancelled = false;
     const unsub = subscribeToUserConnections(
       currentUser.id,
@@ -72,10 +77,10 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
         const acceptedList = list.filter(
           (c) => c.status === 'accepted' || c.status === 'collaborating' || c.status === 'completed'
         );
+        // Only open a chat when explicitly requested (initialConnectionId).
+        // Default Messages view stays blank until the user picks a conversation.
         if (initialConnectionId && acceptedList.some((c) => c.id === initialConnectionId)) {
           setSelectedId(initialConnectionId);
-        } else if (!selectedId && acceptedList[0]) {
-          setSelectedId(acceptedList[0].id);
         }
         const ids = new Set<string>();
         acceptedList.forEach((c) => {
@@ -254,7 +259,16 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                             {p?.name || 'Creator'}
                           </p>
                           <p className="text-[10px] text-[var(--text-muted)] truncate">
-                            {c.lastMessageText || p?.primaryRole || 'Connected'}
+                            {(() => {
+                              const n =
+                                Number(c.unreadCounts?.[myUid]) ||
+                                Number(c.unreadCounts?.[currentUser.id]) ||
+                                0;
+                              if (n > 0 && c.id !== selectedId) {
+                                return n === 1 ? '1 new message' : `${n} new messages`;
+                              }
+                              return c.lastMessageText || p?.primaryRole || 'Connected';
+                            })()}
                           </p>
                         </div>
                         {(() => {
@@ -265,10 +279,11 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                           if (n <= 0 || c.id === selectedId) return null;
                           return (
                             <span
-                              className="shrink-0 ml-1 min-w-[1.25rem] h-5 px-1.5 rounded-full bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] text-[10px] font-bold leading-none flex items-center justify-center"
-                              aria-label={`${n} unread`}
+                              className="shrink-0 max-w-[7.5rem] px-1.5 py-0.5 rounded-full bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] text-[9px] font-bold leading-tight text-center"
+                              aria-label={`${n} new messages`}
+                              title={`${n} new messages`}
                             >
-                              {n > 99 ? '99+' : n}
+                              {n > 99 ? '99+ new messages' : `${n} new message${n === 1 ? '' : 's'}`}
                             </span>
                           );
                         })()}

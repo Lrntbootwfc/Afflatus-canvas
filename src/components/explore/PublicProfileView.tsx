@@ -681,6 +681,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                       currentUserId={currentUser?.id || ''}
                       currentUser={currentUser}
                       onDeleted={() => setUserPosts((prev) => prev.filter((x) => x.id !== post.id))}
+                      allowReactions={false}
                     />
                   ))}
                 </div>

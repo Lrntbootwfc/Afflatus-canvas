@@ -165,11 +165,11 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                   type="button"
                   onClick={() => setIsNotifOpen((v) => !v)}
                   className="relative p-2 sm:px-3 sm:py-1.5 rounded-full bg-[var(--nav-item-bg)] hover:bg-[var(--nav-item-hover)] text-[var(--nav-text)] border border-[var(--nav-border)] transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
-                  title="Notifications"
-                  aria-label="Open notifications"
+                  title="Network"
+                  aria-label="Open Network"
                 >
                   <Bell className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
-                  <span className="hidden lg:inline text-[11px] font-medium">Alerts</span>
+                  <span className="hidden lg:inline text-[11px] font-medium">Network</span>
                   {unreadCount > 0 && (
                     <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
                       {unreadCount > 9 ? '9+' : unreadCount}

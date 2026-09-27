@@ -67,6 +67,7 @@ export const GlobalPostsFeed: React.FC<GlobalPostsFeedProps> = ({
               onOpenMessenger={onOpenMessenger}
               onOpenPost={onOpenPost}
               onDeleted={fetchPosts}
+              allowReactions={false}
             />
           ))}
         </div>

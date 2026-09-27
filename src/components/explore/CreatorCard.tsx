@@ -13,6 +13,9 @@ interface CreatorCardProps {
   onOpenDetail: (creator: ExploreCreatorItem) => void;
   onConnect?: (creator: ExploreCreatorItem) => void;
   connectLabel?: string;
+  /** When false, Like is blocked (button label stays Like) */
+  canInteract?: boolean;
+  onRequireProfileComplete?: () => void;
 }
 
 type ShowcaseItem = { id: string; url: string; title?: string };
@@ -65,6 +68,8 @@ export const CreatorCard: React.FC<CreatorCardProps> = ({
   onOpenDetail,
   onConnect,
   connectLabel = 'Collaborate',
+  canInteract = true,
+  onRequireProfileComplete,
 }) => {
   const available =
     !creator.availability ||
@@ -99,6 +104,10 @@ export const CreatorCard: React.FC<CreatorCardProps> = ({
   const handleLikeItem = async (e: React.MouseEvent, item: ShowcaseItem) => {
     e.stopPropagation();
     if (!myUid) return;
+    if (!canInteract) {
+      onRequireProfileComplete?.();
+      return;
+    }
     setLikeMap((prev) => ({
       ...prev,
       [item.id]: { likedBy: prev[item.id]?.likedBy || [], busy: true },
