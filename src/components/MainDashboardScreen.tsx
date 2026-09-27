@@ -563,7 +563,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
                 {/* Text Bubble */}
                 <div className={`max-w-[85%] sm:max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
                   msg.role === 'user'
-                    ? 'bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] font-medium rounded-br-sm'
+                    ? 'bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] font-medium rounded-br-sm'
                     : 'bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] text-[var(--text-primary)] rounded-bl-sm'
                 }`}>
                   {msg.content}
@@ -629,7 +629,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
                               <button
                                 type="button"
                                 onClick={() => handleConnectCreator(creator)}
-                                className="flex-1 text-[10px] font-bold uppercase tracking-wide py-1.5 rounded-full bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)]"
+                                className="flex-1 text-[10px] font-bold uppercase tracking-wide py-1.5 rounded-full bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)]"
                               >
                                 Connect
                               </button>
@@ -695,7 +695,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
             <button
               type="submit"
               disabled={!inputValue.trim() || isTyping}
-              className="absolute right-2 bottom-2 p-2 rounded-xl bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              className="absolute right-2 bottom-2 p-2 rounded-xl bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
               <Send className="w-4 h-4" />
             </button>

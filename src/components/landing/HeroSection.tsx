@@ -127,7 +127,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
       {/* Center copy */}
       <div className="relative z-10 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16 flex-1 flex flex-col justify-center items-center text-center">
         <div className="max-w-3xl mx-auto space-y-3 mb-6 sm:mb-8">
-          <p className="text-[11px] font-mono tracking-[0.25em] uppercase text-white/50">
+          <p className="text-[11px] font-mono tracking-[0.25em] uppercase text-[var(--accent-amber)]">
             Creative collaboration
           </p>
           <h1 className="font-editorial text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-medium text-white tracking-tight leading-[1.08]">
@@ -152,7 +152,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           <button
             id="hero-book-talent-btn"
             onClick={onGetStarted}
-            className="w-full sm:w-auto px-7 py-3 rounded-full bg-white text-[#0c0c0c] font-semibold text-xs sm:text-sm tracking-wide hover:bg-white/90 transition-colors flex items-center justify-center gap-2 group cursor-pointer active:scale-[0.98]"
+            className="w-full sm:w-auto px-7 py-3 rounded-full bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] font-semibold text-xs sm:text-sm tracking-wide hover:bg-[var(--accent-amber-hover)] transition-colors flex items-center justify-center gap-2 group cursor-pointer active:scale-[0.98]"
           >
             <span>
               {currentUser ? 'Open Production Passport' : 'Get started'}

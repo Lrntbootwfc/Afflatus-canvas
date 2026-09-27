@@ -60,7 +60,7 @@ export const CalmExhaleEnding: React.FC<CalmExhaleEndingProps> = ({
                   <button
                     id="btn-ending-passport"
                     onClick={onUpdateProfile || onGetStarted}
-                    className="px-7 py-3 rounded-full bg-[var(--accent-amber)] hover:bg-[var(--accent-amber-hover)] text-black text-xs font-bold transition-all shadow-lg flex items-center gap-2 cursor-pointer"
+                    className="px-7 py-3 rounded-full bg-[var(--accent-amber)] hover:bg-[var(--accent-amber-hover)] text-[var(--btn-on-accent,#14100C)] text-xs font-bold transition-all shadow-lg flex items-center gap-2 cursor-pointer"
                   >
                     <UserCheck className="w-4 h-4" />
                     <span>Open Your Production Passport</span>
@@ -79,7 +79,7 @@ export const CalmExhaleEnding: React.FC<CalmExhaleEndingProps> = ({
                   <button
                     id="btn-ending-join"
                     onClick={onGetStarted}
-                    className="w-full sm:w-auto px-8 py-3.5 rounded-full bg-[var(--accent-amber)] hover:bg-[var(--accent-amber-hover)] text-black text-xs sm:text-sm font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                    className="w-full sm:w-auto px-8 py-3.5 rounded-full bg-[var(--accent-amber)] hover:bg-[var(--accent-amber-hover)] text-[var(--btn-on-accent,#14100C)] text-xs sm:text-sm font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                   >
                     <span>[ Join the Creative Ecosystem ]</span>
                     <ArrowRight className="w-4 h-4" />
