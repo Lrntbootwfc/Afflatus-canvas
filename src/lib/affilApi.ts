@@ -162,6 +162,25 @@ export const affilApi = {
   deletePost: (postId: string) => client.delete(`/posts/${postId}`).then((r) => r.data),
   updatePost: (postId: string, body: { userId: string; caption?: string; imageUrl?: string }) =>
     client.put(`/posts/${postId}`, body).then((r) => r.data),
+
+  /** Admin-side bump of collaborationCount for both parties (owner-only rules block peer write). */
+  activateCollaborationCount: (connectionId: string) =>
+    client.post('/collaborations/activate-count', { connectionId }).then((r) => r.data),
+
+  /** Live count from connections (collaborating + completed); backfills users.collaborationCount. */
+  getCollaborationCount: (userId: string) =>
+    client.get(`/users/${userId}/collaboration-count`).then((r) => r.data as { userId: string; count: number }),
+
+  // Progressive collaboration questions (optional)
+  getCollaborationQuestionsStatus: () =>
+    client.get('/collaboration-questions/status').then((r) => r.data),
+  getNextCollaborationQuestionSet: () =>
+    client.get('/collaboration-questions/next-set').then((r) => r.data),
+  submitCollaborationQuestionSet: (body: {
+    questionIds: string[];
+    answers: Record<string, string | string[]>;
+  }) => client.post('/collaboration-questions/submit-set', body).then((r) => r.data),
 };
 
 export default affilApi;
+

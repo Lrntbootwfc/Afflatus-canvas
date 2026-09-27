@@ -11,6 +11,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { ProfileSetupScreen } from './components/ProfileSetupScreen';
 import { MainDashboardScreen } from './components/MainDashboardScreen';
 import { ExploreScreen } from './components/explore/ExploreScreen';
+import { CollaborationQuestionsPage } from './components/collaboration/CollaborationQuestionsPage';
 import { C1AssistantDrawer } from './components/assistant/C1AssistantDrawer';
 import { SettingsModal } from './components/SettingsModal';
 import { ThemeSelectorModal } from './components/ThemeSelectorModal';
@@ -33,9 +34,9 @@ import { setAuth } from './lib/affilApi';
 import affilApi from './lib/affilApi';
 
 export default function App() {
-  // Screen Router: 'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore'
+  // Screen Router: 'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore' | 'collab-questions'
   const [currentScreen, setCurrentScreen] = useState<
-    'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore' | 'apply' | 'pending' | 'rejected'
+    'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore' | 'collab-questions' | 'apply' | 'pending' | 'rejected'
   >('landing');
   const [adminAppsOpen, setAdminAppsOpen] = useState(false);
 
@@ -437,6 +438,7 @@ export default function App() {
 
         {currentScreen === 'onboarding' && currentUser && resolveApplicationStatus(currentUser) === 'approved' && (
           <ProfileSetupScreen
+              onOpenCollaborationQuestions={() => setCurrentScreen('collab-questions')}
             initialProfile={currentUser}
             onProfileSaved={handleProfileSaved}
             onCancel={() => {
@@ -471,8 +473,20 @@ export default function App() {
         )}
 
         {/* Screen 5: EXPLORE CORE (Dedicated work, project, task, and guild discovery) */}
-        {currentScreen === 'explore' && currentUser && isApproved(currentUser) && (
+        
+        {currentScreen === 'collab-questions' && currentUser && (
+          <CollaborationQuestionsPage
+            currentUser={currentUser}
+            onBack={() => setCurrentScreen(currentUser.profileCompleted ? 'dashboard' : 'explore')}
+            onCompletedSet={() => {
+              /* refresh profile from firestore optionally */
+            }}
+          />
+        )}
+
+{currentScreen === 'explore' && currentUser && isApproved(currentUser) && (
           <ExploreScreen
+              onOpenCollaborationQuestions={() => setCurrentScreen('collab-questions')}
             onOpenMessenger={(connectionId) => {
               setMessengerConnectionId(connectionId || null);
               if (canInteract(currentUser)) setIsMessengerOpen(true);

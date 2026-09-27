@@ -82,6 +82,11 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
   const [canLeaveFeedback, setCanLeaveFeedback] = useState<boolean>(false);
   const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
   const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null);
+  const [collabCountDisplay, setCollabCountDisplay] = useState<number>(
+    typeof (initialCreator as any)?.collaborationCount === 'number'
+      ? (initialCreator as any).collaborationCount
+      : 0
+  );
   const [isConnectionLoading, setIsConnectionLoading] = useState<boolean>(true);
 
 
@@ -278,12 +283,39 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
     }
   };
 
+  // Live collaboration count from connection records (existing + new)
+  useEffect(() => {
+    if (!creatorId) return;
+    let cancelled = false;
+    affilApi
+      .getCollaborationCount(creatorId)
+      .then((res) => {
+        if (!cancelled && typeof res?.count === 'number') {
+          setCollabCountDisplay(res.count);
+        }
+      })
+      .catch(() => {
+        /* keep fallback */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [creatorId]);
+
   const handleStartCollaboration = async () => {
     if (!activeConnectionId || !currentUser?.id) return;
     try {
       const updated = await toggleCollaborationStatus(activeConnectionId, currentUser.id);
       setConnectionStatus(updated.status);
       setCanLeaveFeedback(updated.status === 'collaborating' || updated.status === 'completed');
+      if (updated.status === 'collaborating' || updated.status === 'completed') {
+        try {
+          const res = await affilApi.getCollaborationCount(creatorId);
+          if (typeof res?.count === 'number') setCollabCountDisplay(res.count);
+        } catch {
+          /* ignore */
+        }
+      }
     } catch (err) {
       console.error('Failed to start collaboration:', err);
     }
@@ -515,7 +547,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Collaborative Projects</p>
                   <p className="font-semibold text-[var(--text-primary)] mt-0.5">
-                    {creator.collaborationCount || 0} {(creator.collaborationCount === 1) ? 'Project' : 'Projects'}
+                    {collabCountDisplay} {(collabCountDisplay === 1) ? 'Project' : 'Projects'}
                   </p>
                 </div>
               </div>

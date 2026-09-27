@@ -45,11 +45,13 @@ import {
   getProfileFromFirestore,
 } from '../../lib/firebase';
 import { GlobalPostsFeed } from '../feed/GlobalPostsFeed';
+import affilApi from '../../lib/affilApi';
 import { CreatePostInput } from '../feed/CreatePostInput';
 
 interface ExploreScreenProps {
   currentUser: CreatorProfile | null;
   onNavigateToOnboarding: () => void;
+  onOpenCollaborationQuestions?: () => void;
   onNavigateToAuth: () => void;
   onViewCreatorProfile: (creator: CreatorProfile) => void;
   onInitiateConnection: (creator: CreatorProfile, defaultMessage?: string) => void;
@@ -75,6 +77,7 @@ const CATEGORIES = [
 export const ExploreScreen: React.FC<ExploreScreenProps> = ({
   currentUser,
   onNavigateToOnboarding,
+  onOpenCollaborationQuestions,
   onNavigateToAuth,
   onViewCreatorProfile,
   onInitiateConnection,
@@ -109,6 +112,8 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
 
   // Gated action modal
   const [gatedModalOpen, setGatedModalOpen] = useState(false);
+  const [collabQAvailable, setCollabQAvailable] = useState(false);
+  const [collabQRemaining, setCollabQRemaining] = useState(0);
   const [gatedActionTitle, setGatedActionTitle] = useState('Collaborate & Connect');
 
   // Interactive feedback toast
@@ -240,6 +245,27 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
     if (!currentUser) return false;
     return !!currentUser.profileCompleted;
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser?.id || !currentUser.profileCompleted) {
+      setCollabQAvailable(false);
+      return;
+    }
+    let cancelled = false;
+    affilApi
+      .getCollaborationQuestionsStatus()
+      .then((s) => {
+        if (cancelled) return;
+        setCollabQAvailable(!!s?.hasAvailableQuestions);
+        setCollabQRemaining(Number(s?.remaining) || 0);
+      })
+      .catch(() => {
+        if (!cancelled) setCollabQAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, currentUser?.profileCompleted]);
 
   // Gatekeeper for restricted actions
   const handleGatedAction = (actionTitle: string, callback: () => void) => {
@@ -453,6 +479,28 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             </button>
           </div>
         )}
+
+        {/* Progressive collaboration questions — optional, never blocks Explore */}
+        {currentUser && isProfileComplete && collabQAvailable && (
+          <div className="p-3.5 rounded-2xl bg-[var(--card-inner-bg)] border border-[var(--accent-amber)]/30 flex items-center gap-3 shrink-0">
+            <Sparkles className="w-5 h-5 text-[var(--accent-amber)] shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-[var(--text-primary)]">New collaboration questions</p>
+              <p className="text-[11px] text-[var(--text-secondary)]">
+                New questions are available 
+        
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenCollaborationQuestions?.()}
+              className="amber-pill-btn px-3 py-1.5 rounded-full text-[11px] font-bold shrink-0 cursor-pointer"
+            >
+              Answer
+            </button>
+          </div>
+        )}
+
       </div>
 
       {/* 2. Main Navigation Tabs */}

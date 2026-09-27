@@ -664,18 +664,22 @@ export async function seedFirestoreIfEmpty(seedUsers: CreatorProfile[], seedProj
 // EXPLORE + CONNECTIONS (Firestore source of truth — no database.json dependency)
 // ============================================================================
 
-async function fetchCollectionSafe<T>(collectionName: string): Promise<T[]> {
+/**
+ * Load a collection for Explore.
+ * Do NOT race getDocs against a short timeout and return [] — that made
+ * Explore Creators appear on one refresh and vanish on the next.
+ */
+async function fetchCollectionSafe<T>(
+  collectionName: string,
+  options?: { required?: boolean }
+): Promise<T[]> {
   try {
-    const snap = await Promise.race([
-      getDocs(collection(db, collectionName)),
-      new Promise<null>((_, reject) =>
-        setTimeout(() => reject(new Error('Firestore client is offline')), 4000)
-      ),
-    ]);
-    if (!snap) return [];
+    await ensureFirestoreOnline();
+    const snap = await getDocs(collection(db, collectionName));
     return snap.docs.map((d) => ({ id: d.id, ...d.data() } as T));
   } catch (err: any) {
     console.warn(`[Firestore] ${collectionName} fetch failed:`, err?.message || err);
+    if (options?.required) throw err;
     return [];
   }
 }
@@ -692,8 +696,8 @@ export async function fetchExploreFeedFromFirestore(params?: {
   const cat = (params?.category || 'all').toLowerCase();
   const q = (params?.search || '').trim().toLowerCase();
 
-  const [users, projects, tasks, works, clubs] = await Promise.all([
-    fetchCollectionSafe<CreatorProfile>('users'),
+  const users = await fetchCollectionSafe<CreatorProfile>('users', { required: true });
+  const [projects, tasks, works, clubs] = await Promise.all([
     fetchCollectionSafe<Project>('projects'),
     fetchCollectionSafe<ProjectTask>('tasks'),
     fetchCollectionSafe<WorkShowcase>('works'),
@@ -1151,12 +1155,17 @@ export async function toggleCollaborationStatus(
     updatedAt: serverTimestamp(),
   });
 
-  // Persist collaborationCount on both profiles when collaboration first becomes active.
-  // UI reads users.collaborationCount — without this write the counter stays 0 forever.
+  // Persist collaborationCount on BOTH profiles when collaboration first becomes active.
+  // Firestore rules: users/{id} update is owner-only — client cannot write the peer's count.
+  // Must go through Main Backend (Admin SDK). Idempotent via collaborationCountApplied on connection.
   if (both && nextStatus === 'collaborating' && !wasCollaborating) {
-    const bump = async (uid: string) => {
+    try {
+      const { default: affilApi } = await import('./affilApi');
+      await affilApi.activateCollaborationCount(connectionId);
+    } catch (e) {
+      console.warn('[collaborationCount] backend activate failed, trying self-only fallback', e);
       try {
-        const userRef = doc(db, 'users', uid);
+        const userRef = doc(db, 'users', actingUserId);
         const snap = await getDoc(userRef);
         const prev = snap.exists() ? Number((snap.data() as any)?.collaborationCount) || 0 : 0;
         await setDoc(
@@ -1164,11 +1173,10 @@ export async function toggleCollaborationStatus(
           { collaborationCount: prev + 1, updatedAt: serverTimestamp() },
           { merge: true }
         );
-      } catch (e) {
-        console.warn('[collaborationCount] increment failed for', uid, e);
+      } catch (e2) {
+        console.warn('[collaborationCount] self fallback failed', e2);
       }
-    };
-    await Promise.all([bump(data.senderId), bump(data.recipientId)]);
+    }
   }
 
   const peerId = data.senderId === actingUserId ? data.recipientId : data.senderId;
