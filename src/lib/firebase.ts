@@ -93,6 +93,8 @@ export function sanitizeUserFacingError(err: unknown, fallback = 'Something went
   if (
     lower.includes('target id already exists') ||
     lower.includes('already exists') && lower.includes('target') ||
+    lower.includes('internal assertion') ||
+    lower.includes('unexpected state') ||
     lower.includes('permission-denied') ||
     lower.includes('missing or insufficient permissions') ||
     lower.includes('failed-precondition') ||
@@ -106,6 +108,119 @@ export function sanitizeUserFacingError(err: unknown, fallback = 'Something went
   // Keep short, human messages we intentionally throw
   if (msg.length > 180) return fallback;
   return msg || fallback;
+}
+
+
+// ---------------------------------------------------------------------------
+// Shared onSnapshot registry
+// Multiple React components often subscribe to the same query (e.g. HeaderNav
+// badge + Network panel). Two identical onSnapshot targets → intermittent
+// "INTERNAL ASSERTION FAILED / Unexpected state (targetId)".
+// One Firestore listen per key; ref-counted fan-out to local listeners.
+// ---------------------------------------------------------------------------
+type SharedSnapEntry = {
+  refCount: number;
+  unsubFs: Unsubscribe;
+  listeners: Set<(data: unknown) => void>;
+  errorListeners: Set<(err: Error) => void>;
+  lastData: unknown;
+  hasData: boolean;
+};
+
+const __sharedSnaps = new Map<string, SharedSnapEntry>();
+
+function shareOnSnapshot<T>(
+  key: string,
+  startListen: (
+    onData: (data: T) => void,
+    onErr: (err: Error) => void
+  ) => Unsubscribe,
+  onChange: (data: T) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  let entry = __sharedSnaps.get(key);
+  if (!entry) {
+    const listeners = new Set<(data: unknown) => void>();
+    const errorListeners = new Set<(err: Error) => void>();
+    listeners.add(onChange as (data: unknown) => void);
+    if (onError) errorListeners.add(onError);
+
+    const unsubFs = startListen(
+      (data) => {
+        const e = __sharedSnaps.get(key);
+        if (!e) return;
+        e.lastData = data;
+        e.hasData = true;
+        e.listeners.forEach((fn) => {
+          try {
+            fn(data);
+          } catch (err) {
+            console.warn('[shareOnSnapshot] listener error', err);
+          }
+        });
+      },
+      (err) => {
+        const msg = String((err as any)?.message || err || '');
+        // Swallow known SDK race noise; do not surface as user-facing failures
+        if (
+          /target id already exists/i.test(msg) ||
+          /internal assertion/i.test(msg) ||
+          /unexpected state/i.test(msg)
+        ) {
+          console.warn('[Firestore] shared listen race (ignored):', msg.slice(0, 120));
+          return;
+        }
+        const e = __sharedSnaps.get(key);
+        e?.errorListeners.forEach((fn) => {
+          try {
+            fn(err);
+          } catch {
+            /* ignore */
+          }
+        });
+      }
+    );
+
+    entry = {
+      refCount: 1,
+      unsubFs,
+      listeners,
+      errorListeners,
+      lastData: undefined,
+      hasData: false,
+    };
+    __sharedSnaps.set(key, entry);
+  } else {
+    entry.refCount += 1;
+    entry.listeners.add(onChange as (data: unknown) => void);
+    if (onError) entry.errorListeners.add(onError);
+    if (entry.hasData) {
+      try {
+        onChange(entry.lastData as T);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  let cleaned = false;
+  return () => {
+    if (cleaned) return;
+    cleaned = true;
+    const e = __sharedSnaps.get(key);
+    if (!e) return;
+    e.listeners.delete(onChange as (data: unknown) => void);
+    if (onError) e.errorListeners.delete(onError);
+    e.refCount -= 1;
+    if (e.refCount <= 0) {
+      __sharedSnaps.delete(key);
+      try {
+        e.unsubFs();
+      } catch (err) {
+        console.warn('[shareOnSnapshot] unsub failed', err);
+      }
+    }
+  };
 }
 
 export interface ConnectionRequest {
@@ -1381,38 +1496,43 @@ export function subscribeToMessages(
   onChange: (messages: ChatMessage[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (!connectionId) {
+    onChange([]);
+    return () => {};
+  }
   // Single-field query only — no composite index required.
-  // Sort by createdAt on the client (handles string | Timestamp).
-  const q = query(
-    collection(db, 'messages'),
-    where('connectionId', '==', connectionId),
-    limit(200)
-  );
-  return onSnapshot(
-    q,
-    (snap) => {
-      const msgs = snap.docs
-        .map((d) => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            ...data,
-            createdAt:
-              typeof data.createdAt === 'string'
-                ? data.createdAt
-                : toSortKey(data.createdAt || data.createdAtTs),
-          } as ChatMessage;
-        })
-        .sort((a, b) => toSortMs(a.createdAt) - toSortMs(b.createdAt));
-      onChange(msgs);
+  // Shared listen key prevents duplicate targets when effects re-run / StrictMode.
+  return shareOnSnapshot<ChatMessage[]>(
+    `messages:${connectionId}`,
+    (emit, emitErr) => {
+      const q = query(
+        collection(db, 'messages'),
+        where('connectionId', '==', connectionId),
+        limit(200)
+      );
+      return onSnapshot(
+        q,
+        (snap) => {
+          const msgs = snap.docs
+            .map((d) => {
+              const data = d.data() as any;
+              return {
+                id: d.id,
+                ...data,
+                createdAt:
+                  typeof data.createdAt === 'string'
+                    ? data.createdAt
+                    : toSortKey(data.createdAt || data.createdAtTs),
+              } as ChatMessage;
+            })
+            .sort((a, b) => toSortMs(a.createdAt) - toSortMs(b.createdAt));
+          emit(msgs);
+        },
+        (err) => emitErr(err as Error)
+      );
     },
-    (err) => {
-      const msg = String((err as any)?.message || err);
-      console.warn('[Firestore] messages subscription error:', msg);
-      if (!msg.toLowerCase().includes('target id already exists')) {
-        onError?.(err as Error);
-      }
-    }
+    onChange,
+    onError
   );
 }
 
@@ -1421,27 +1541,32 @@ export function subscribeToNotifications(
   onChange: (items: AppNotification[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
-  // Avoid composite index requirement: filter only, sort client-side
-  const q = query(
-    collection(db, 'notifications'),
-    where('userId', '==', userId),
-    limit(50)
-  );
-  return onSnapshot(
-    q,
-    (snap) => {
-      const items = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as AppNotification))
-        .sort((a, b) => toSortMs(b.createdAt) - toSortMs(a.createdAt));
-      onChange(items);
+  if (!userId) {
+    onChange([]);
+    return () => {};
+  }
+  // Header badge + Network panel both call this — MUST share one target.
+  return shareOnSnapshot<AppNotification[]>(
+    `notifications:${userId}`,
+    (emit, emitErr) => {
+      const q = query(
+        collection(db, 'notifications'),
+        where('userId', '==', userId),
+        limit(50)
+      );
+      return onSnapshot(
+        q,
+        (snap) => {
+          const items = snap.docs
+            .map((d) => ({ id: d.id, ...d.data() } as AppNotification))
+            .sort((a, b) => toSortMs(b.createdAt) - toSortMs(a.createdAt));
+          emit(items);
+        },
+        (err) => emitErr(err as Error)
+      );
     },
-    (err) => {
-      const msg = String((err as any)?.message || err);
-      console.warn('[Firestore] notifications subscription error:', msg);
-      if (!msg.toLowerCase().includes('target id already exists')) {
-        onError?.(err as Error);
-      }
-    }
+    onChange,
+    onError
   );
 }
 
@@ -1903,19 +2028,26 @@ export function subscribeToUserProfile(
     onChange(null);
     return () => {};
   }
-  const ref = doc(db, 'users', userId);
-  return onSnapshot(
-    ref,
-    (snap) => {
-      if (!snap.exists()) {
-        onChange(null);
-        return;
-      }
-      onChange({ id: userId, ...(snap.data() as CreatorProfile) });
+  return shareOnSnapshot<CreatorProfile | null>(
+    `userProfile:${userId}`,
+    (emit, emitErr) => {
+      const ref = doc(db, 'users', userId);
+      return onSnapshot(
+        ref,
+        (snap) => {
+          if (!snap.exists()) {
+            emit(null);
+            return;
+          }
+          emit({ id: userId, ...(snap.data() as CreatorProfile) });
+        },
+        (err) => {
+          console.warn('[subscribeToUserProfile]', err);
+          emitErr(err as Error);
+        }
+      );
     },
-    (err) => {
-      console.warn('[subscribeToUserProfile]', err);
-    }
+    onChange
   );
 }
 
