@@ -792,29 +792,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
             </div>
 
             
-        {/* Progressive Collaboration Profile — optional sets of 5 */}
-        <div className="card-warm-white rounded-3xl p-6 sm:p-8 space-y-3 border border-[var(--card-border)] shadow-md">
-          <div className="flex items-center gap-2 pb-2 border-b border-[var(--card-border)]">
-            <Sparkles className="w-4 h-4 text-[var(--accent-amber)]" />
-            <h3 className="font-editorial text-lg font-bold text-[var(--text-primary)]">
-              Collaboration Profile
-            </h3>
-          </div>
-          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-            Beyond the basic scenarios below, Afflatus can ask short optional sets of questions about how you like to work.
-            These never block Explore. Answers feed compatibility signals alongside role, ratings, and activity.
-          </p>
-          {typeof onOpenCollaborationQuestions === 'function' && (
-            <button
-              type="button"
-              onClick={onOpenCollaborationQuestions}
-              className="amber-pill-btn inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              Answer collaboration questions
-            </button>
-          )}
-        </div>
+
 
             {/* Basic collaboration scenarios (onboarding 5) — progressive questions live elsewhere */}
             {true && (
