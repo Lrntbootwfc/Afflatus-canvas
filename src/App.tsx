@@ -76,13 +76,9 @@ export default function App() {
       }
       return;
     }
-    // APPROVED: Explore/dashboard visible even if basic profile incomplete.
-    // Interaction (messages, collaborate, etc.) stays gated by profileCompleted.
-    if (!profile.profileCompleted) {
-      setCurrentScreen('onboarding');
-      return;
-    }
-    setCurrentScreen('dashboard');
+    // APPROVED: Explore is visible immediately.
+    // Interaction (messages, collaborate, posting) stays gated by profileCompleted.
+    setCurrentScreen(profile.profileCompleted ? 'dashboard' : 'explore');
   };
 
   const isApproved = (u: CreatorProfile | null) =>

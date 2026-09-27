@@ -678,9 +678,10 @@ export async function fetchExploreFeedFromFirestore(params?: {
     );
   }
 
-  // Creators: exclude current user; optional search
+  // Creators: only APPROVED users appear in Explore. Exclude current user.
   let creatorsOut: ExploreCreatorItem[] = users
     .filter((u) => u.id !== params?.userId)
+    .filter((u) => resolveApplicationStatus(u) === 'approved')
     .map((u) => {
       const publicU = toPublic(u)!;
       return {
@@ -788,8 +789,15 @@ export async function createConnectionRequest(params: {
 
   // Prefer deterministic doc id
   const pairRef = doc(db, 'connections', pairId);
-  const pairSnap = await getDoc(pairRef);
-  if (pairSnap.exists()) {
+  let pairSnap: Awaited<ReturnType<typeof getDoc>> | null = null;
+  try {
+    pairSnap = await getDoc(pairRef);
+  } catch (err: any) {
+    // Missing-doc get can 403 with participant-only rules; treat as not found
+    console.warn('[createConnectionRequest] existence check:', err?.message || err);
+    pairSnap = null;
+  }
+  if (pairSnap?.exists()) {
     const existing = { id: pairSnap.id, ...pairSnap.data() } as ConnectionRequest;
     return { connection: existing, alreadyExists: true };
   }
@@ -1886,25 +1894,59 @@ export async function submitJoinApplication(params: {
   message?: string;
 }): Promise<void> {
   const current = auth.currentUser;
-  if (!current || current.uid !== params.userId) {
+  if (!current) {
     throw new Error('You must be signed in to apply.');
   }
+
+  // Always bind to Auth UID. Ignore any stale profile.id mismatch.
+  const uid = current.uid;
+  await current.getIdToken();
+
   const now = new Date().toISOString();
   const message = (params.message || '').trim().slice(0, 2000);
-  const appRef = doc(db, 'applications', current.uid);
-  // Rules require: doc id == auth.uid, data.userId == auth.uid, status == 'pending'
+  const email = (params.email || current.email || '').trim();
+  const name = (params.name || current.displayName || email.split('@')[0] || 'Applicant').trim();
+
   const appPayload = {
-    userId: current.uid,
-    email: (params.email || current.email || '').trim() || (current.email || ''),
-    name: (params.name || current.displayName || '').trim() || 'Applicant',
+    userId: uid,
+    email,
+    name,
     message,
     status: 'pending',
     createdAt: now,
     updatedAt: now,
   };
 
+  const userRef = doc(db, 'users', uid);
+  const appRef = doc(db, 'applications', uid);
+
   try {
-    await setDoc(appRef, appPayload, { merge: true });
+    await setDoc(
+      userRef,
+      {
+        id: uid,
+        email,
+        name,
+        applicationStatus: 'pending',
+        applicationMessage: message,
+        applicationSubmittedAt: now,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    console.error('[submitJoinApplication] users bootstrap failed', err);
+    throw new Error(
+      String(err?.message || '').toLowerCase().includes('permission')
+        ? 'Insufficient permission to save your account. Publish the latest firestore.rules (users create/update for your own uid).'
+        : String(err?.message || 'Failed to save your account.')
+    );
+  }
+
+  try {
+    // Full replace — do NOT use merge. merge:true on a missing applications
+    // doc is often evaluated as UPDATE, and resource.data is null → denied.
+    await setDoc(appRef, appPayload);
   } catch (err: any) {
     const msg = String(err?.message || err || '');
     console.error('[submitJoinApplication] applications write failed', err);
@@ -1915,37 +1957,9 @@ export async function submitJoinApplication(params: {
     );
   }
 
-  // Verify persistence (source of truth)
-  try {
-    const verify = await getDoc(appRef);
-    if (!verify.exists() || (verify.data() as any)?.status !== 'pending') {
-      throw new Error('Application was not saved as pending. Check Firestore rules and network.');
-    }
-  } catch (err: any) {
-    if (String(err?.message || '').includes('not saved')) throw err;
-    console.warn('[submitJoinApplication] verify read failed', err);
-  }
-
-  try {
-    await setDoc(
-      doc(db, 'users', current.uid),
-      {
-        applicationStatus: 'pending',
-        applicationMessage: message,
-        applicationSubmittedAt: now,
-        email: appPayload.email,
-        name: appPayload.name || undefined,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
-  } catch (err: any) {
-    console.error('[submitJoinApplication] users mirror failed', err);
-    throw new Error(
-      String(err?.message || '').toLowerCase().includes('permission')
-        ? 'Insufficient permission to update your profile application status. Publish firestore.rules.'
-        : String(err?.message || 'Failed to update profile application status.')
-    );
+  const verify = await getDoc(appRef);
+  if (!verify.exists() || String((verify.data() as any)?.status) !== 'pending') {
+    throw new Error('Application was not saved as pending. Publish the latest firestore.rules and retry.');
   }
 }
 

@@ -12,6 +12,7 @@ interface CreatorCardProps {
   creator: ExploreCreatorItem;
   onOpenDetail: (creator: ExploreCreatorItem) => void;
   onConnect?: (creator: ExploreCreatorItem) => void;
+  connectLabel?: string;
 }
 
 type ShowcaseItem = { id: string; url: string; title?: string };
@@ -59,7 +60,12 @@ function buildShowcaseItems(creator: ExploreCreatorItem): ShowcaseItem[] {
   return items;
 }
 
-export const CreatorCard: React.FC<CreatorCardProps> = ({ creator, onOpenDetail, onConnect }) => {
+export const CreatorCard: React.FC<CreatorCardProps> = ({
+  creator,
+  onOpenDetail,
+  onConnect,
+  connectLabel = 'Collaborate',
+}) => {
   const available =
     !creator.availability ||
     creator.availability.status === 'available' ||
@@ -215,7 +221,7 @@ export const CreatorCard: React.FC<CreatorCardProps> = ({ creator, onOpenDetail,
                 className="amber-pill-btn inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2 text-[11px] font-bold shadow-sm"
               >
                 <MessageSquare className="h-3.5 w-3.5" />
-                Collaborate
+                {connectLabel}
               </button>
             )}
           </div>

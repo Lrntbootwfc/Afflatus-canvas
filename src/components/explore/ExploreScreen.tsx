@@ -480,7 +480,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
           </button>
         </div>
 
-        {currentUser && mainTab === 'feed' && (
+        {currentUser && mainTab === 'feed' && currentUser.profileCompleted && (
           <button
             onClick={() => setIsCreatePostModalOpen(true)}
             className="flex items-center gap-2 px-4 py-2 bg-[var(--accent-amber)] hover:bg-[#e69c1e] text-black font-bold rounded-full transition-colors text-sm shrink-0"
@@ -707,6 +707,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
                         creator={creator}
                         onOpenDetail={handleViewCreator}
                         onConnect={handleConnectCreator}
+                        connectLabel={currentUser?.profileCompleted ? 'Collaborate' : 'Complete Profile'}
                       />
                     ))}
                   </div>
@@ -800,6 +801,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
                     creator={creator}
                     onOpenDetail={handleViewCreator}
                     onConnect={handleConnectCreator}
+                    connectLabel={currentUser?.profileCompleted ? 'Collaborate' : 'Complete Profile'}
                   />
                 ))}
               </div>
@@ -906,7 +908,9 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             </div>
             <div>
               <p className="text-xs font-bold text-[var(--text-primary)]">
-                {/error|failed|must be signed|sign in|Network/i.test(toastMessage || '')
+                {/error|failed|must be signed|sign in|Network|permission|insufficient|complete your profile|approved/i.test(
+                  toastMessage || ''
+                )
                   ? 'Could not send proposal'
                   : 'Collaboration Proposal Sent'}
               </p>
