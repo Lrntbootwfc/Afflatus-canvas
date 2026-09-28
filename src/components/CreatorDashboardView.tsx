@@ -1,3 +1,5 @@
+import { computeProfileCompletion } from '../lib/profileCompletion';
+import { ProfileCompletionRing } from './ProfileCompletionRing';
 import React, { useState, useEffect } from 'react';
 import {
   Camera,
@@ -205,23 +207,24 @@ export const CreatorDashboardView: React.FC<CreatorDashboardViewProps> = ({
   const [collaboratorSearchQuery, setCollaboratorSearchQuery] = useState<string>('');
   const [selectedCollaboratorModal, setSelectedCollaboratorModal] = useState<CreatorProfile | null>(null);
 
-  // Calculate Profile Readiness Score (%)
+  // Basic profile-completion % from persisted core fields (not progressive Q sets)
   const calculateReadiness = () => {
-    let score = 0;
-    const checks: { label: string; done: boolean }[] = [
-      { label: 'Primary Role & Location set', done: Boolean(formData.primaryRole && formData.location) },
-      { label: 'Verified Camera Body / Tech Kit', done: Boolean(formData.cameraBodyVerified && formData.gearItems?.length > 0) },
-      { label: 'Day Rate & Overtime terms', done: Boolean(formData.dayRateUsd > 0 && formData.overtimeHourlyRate) },
-      { label: 'Travel Scope & Radius', done: Boolean(formData.travelRadiusMiles > 0 && formData.location) },
-      { label: 'Insurance & COI Verified', done: Boolean(formData.insuranceCoiReady) },
-      { label: 'Portfolio & Reel Link', done: Boolean(formData.portfolios?.length > 0) },
-      { label: 'Working Style Protocol', done: Boolean(formData.communicationStyle && formData.preferredChannel) },
-      { label: 'Availability Date Locked', done: Boolean(formData.nextAvailabilityDate) },
-    ];
-
-    const completed = checks.filter((c) => c.done).length;
-    score = Math.round((completed / checks.length) * 100);
-    return { score, checks };
+    const result = computeProfileCompletion({
+      name: formData.name,
+      primaryRole: formData.primaryRole,
+      location: formData.location,
+      bio: formData.bio,
+      avatarUrl: formData.avatarUrl,
+      portfolios: formData.portfolios,
+      workLinks: (formData as any).workLinks,
+      socialLinks: (formData as any).socialLinks,
+      collaborationScenarios: (formData as any).collaborationScenarios,
+      profileCompleted: (formData as any).profileCompleted,
+    });
+    return {
+      score: result.percent,
+      checks: result.checks.map((c) => ({ label: c.label, done: c.done })),
+    };
   };
 
   const readiness = calculateReadiness();
@@ -346,10 +349,12 @@ export const CreatorDashboardView: React.FC<CreatorDashboardViewProps> = ({
 
         {/* Quick Jump Stats Bar */}
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#FFFFFF] border border-[#EAE2D5] text-xs font-semibold text-[#181614] shadow-sm">
-            <span className="w-2 h-2 rounded-full bg-[#E58B13]" />
-            <span>Profile Readiness:</span>
-            <strong className="font-mono text-[#E58B13]">{readiness.score}% Complete</strong>
+          <div className="inline-flex items-center gap-3 px-3 py-2 rounded-2xl bg-[#FFFFFF] border border-[#EAE2D5] text-xs font-semibold text-[#181614] shadow-sm">
+            <ProfileCompletionRing percent={readiness.score} size={52} strokeWidth={6} label="" />
+            <div className="text-left pr-1">
+              <div className="text-[10px] uppercase tracking-wider text-[#8C7862]">Profile complete</div>
+              <strong className="font-mono text-[#E58B13] text-sm">{readiness.score}%</strong>
+            </div>
           </div>
 
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#FFFFFF] border border-[#EAE2D5] text-xs font-medium text-[#5C5449] shadow-sm">
@@ -1214,15 +1219,16 @@ export const CreatorDashboardView: React.FC<CreatorDashboardViewProps> = ({
 
           {/* Profile Completion Checklist Card */}
           <div className="card-warm-white rounded-3xl p-6 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <span className="text-[10px] font-bold text-[#8C7862] uppercase tracking-wider block">
-                  VERIFICATION READINESS
+                  PROFILE COMPLETION
                 </span>
                 <h4 className="font-editorial text-lg font-bold text-[#141210]">
-                  Exchange Checklist
+                  Basic profile checklist
                 </h4>
               </div>
+              <ProfileCompletionRing percent={readiness.score} size={64} strokeWidth={7} label="" />
               <span className="font-mono text-sm font-bold text-[#E58B13]">
                 {readiness.score}% Complete
               </span>

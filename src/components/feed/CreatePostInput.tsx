@@ -1,7 +1,14 @@
 import React, { useState, useRef } from 'react';
-import { Image as ImageIcon, Send } from 'lucide-react';
+import { Image as ImageIcon, Send, AlertCircle } from 'lucide-react';
 import affilApi from '../../lib/affilApi';
 import { CreatorProfile } from '../../types';
+import {
+  compressImageFile,
+  validateImageFileSize,
+  validateVideoFileSize,
+  IMAGE_HARD_MAX_BYTES,
+  formatBytes,
+} from '../../lib/mediaLimits';
 
 interface CreatePostInputProps {
   currentUser: CreatorProfile;
@@ -12,24 +19,42 @@ export const CreatePostInput: React.FC<CreatePostInputProps> = ({ currentUser, o
   const [caption, setCaption] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [isCompressing, setIsCompressing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    setMediaError(null);
 
-    if (file.size > 150 * 1024) {
-      alert('Image size cannot be greater than 150KB.');
-      e.target.value = '';
+    if (file.type.startsWith('video/')) {
+      const verr = validateVideoFileSize(file, 'post');
+      if (verr) {
+        setMediaError(verr);
+        return;
+      }
+      // Posts currently store imageUrl data URLs; video URL path reserved for future storage
+      setMediaError('Video posts require Cloud Storage. Please use an image for now (max 1 MB compressed).');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setImageUrl(event.target?.result as string);
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+    const sizeErr = validateImageFileSize(file);
+    if (sizeErr) {
+      setMediaError(sizeErr);
+      return;
+    }
+
+    setIsCompressing(true);
+    try {
+      const compressed = await compressImageFile(file, { maxDimension: 1280 });
+      setImageUrl(compressed);
+    } catch (err: any) {
+      setMediaError(err?.message || `Could not process image (max ${formatBytes(IMAGE_HARD_MAX_BYTES)}).`);
+    } finally {
+      setIsCompressing(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -37,11 +62,12 @@ export const CreatePostInput: React.FC<CreatePostInputProps> = ({ currentUser, o
     if (!caption.trim() && !imageUrl.trim()) return;
 
     setIsSubmitting(true);
+    setMediaError(null);
     try {
       await affilApi.createPost({
         authorId: currentUser.id,
         authorName: currentUser.name,
-        authorRole: currentUser.role || 'Creator',
+        authorRole: (currentUser as any).role || currentUser.primaryRole || 'Creator',
         authorAvatar: currentUser.avatarUrl || undefined,
         caption: caption.trim(),
         imageUrl: imageUrl.trim() || undefined,
@@ -53,7 +79,7 @@ export const CreatePostInput: React.FC<CreatePostInputProps> = ({ currentUser, o
       }
     } catch (err) {
       console.error('Failed to create post:', err);
-      alert('Failed to create post. Please try again.');
+      setMediaError('Failed to create post. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -67,57 +93,68 @@ export const CreatePostInput: React.FC<CreatePostInputProps> = ({ currentUser, o
             <img src={currentUser.avatarUrl} alt={currentUser.name} className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)] font-bold">
-              {currentUser.name.charAt(0).toUpperCase()}
+              {currentUser.name?.charAt(0)?.toUpperCase() || 'C'}
             </div>
           )}
         </div>
         <textarea
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
-          placeholder="Share your latest work, ideas, or behind-the-scenes..."
+          placeholder="Share an update with the network…"
           className="w-full bg-transparent resize-none outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] min-h-[60px]"
-          disabled={isSubmitting}
         />
       </div>
 
       {imageUrl && (
-        <div className="mb-4 relative rounded-2xl overflow-hidden border border-[var(--card-border)] bg-[var(--app-bg)] flex items-center justify-center">
-          <img src={imageUrl} alt="Upload preview" className="w-full h-auto object-contain max-h-64" />
-          <button 
+        <div className="relative mb-3 rounded-2xl overflow-hidden border border-[var(--card-border)] max-h-64">
+          <img src={imageUrl} alt="Preview" className="w-full max-h-64 object-cover" />
+          <button
             type="button"
             onClick={() => setImageUrl('')}
-            className="absolute top-2 right-2 bg-black/50 text-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-black/70"
+            className="absolute top-2 right-2 px-2 py-1 rounded-full bg-black/60 text-white text-[10px] font-semibold"
           >
-            ×
+            Remove
           </button>
         </div>
       )}
 
-      <div className="flex items-center justify-between pt-3 border-t border-[var(--card-border)]">
-        <div className="flex items-center">
+      {mediaError && (
+        <div className="mb-3 flex items-start gap-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span>{mediaError}</span>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
           <input
-            type="file"
-            accept="image/*"
             ref={fileInputRef}
-            onChange={handleImageUpload}
+            type="file"
+            accept="image/*,video/*"
             className="hidden"
+            onChange={handleImageUpload}
           />
-          <button 
+          <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="flex items-center space-x-2 text-sm text-[var(--text-muted)] hover:text-[var(--accent-amber)] transition-colors px-2 py-1 rounded-lg"
+            disabled={isCompressing || isSubmitting}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--card-border)] cursor-pointer disabled:opacity-50"
           >
             <ImageIcon size={18} />
-            <span>Image</span>
+            <span>{isCompressing ? 'Compressing…' : 'Media'}</span>
           </button>
+          <span className="text-[10px] text-[var(--text-muted)]">
+            Images max {formatBytes(IMAGE_HARD_MAX_BYTES)} (auto-compressed)
+          </span>
         </div>
         <button
+          type="button"
           onClick={handleSubmit}
-          disabled={isSubmitting || (!caption.trim() && !imageUrl.trim())}
-          className="flex items-center space-x-2 bg-[var(--accent-amber)] hover:bg-[var(--accent-amber-hover)] text-[var(--btn-on-accent,#14100C)] px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
+          disabled={isSubmitting || isCompressing || (!caption.trim() && !imageUrl.trim())}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] text-[var(--text-primary)] disabled:opacity-50 cursor-pointer"
         >
-          <span>{isSubmitting ? 'Posting...' : 'Post'}</span>
           <Send size={14} />
+          <span>{isSubmitting ? 'Posting…' : 'Post'}</span>
         </button>
       </div>
     </div>

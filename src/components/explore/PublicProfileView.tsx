@@ -1,3 +1,4 @@
+import { deriveWorksCount } from '../../lib/profileCompletion';
 import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft,
@@ -540,7 +541,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Public Showcases</p>
                   <p className="font-semibold text-[var(--text-primary)] mt-0.5">
-                    {(typeof creator.worksCount === 'number' ? creator.worksCount : works.length)} {(typeof creator.worksCount === 'number' ? creator.worksCount : works.length) === 1 ? 'Showcase' : 'Showcases'}
+                    {(() => { const n = deriveWorksCount(creator as any, works.length); return `${n} ${n === 1 ? 'Showcase' : 'Showcases'}`; })()}
                   </p>
                 </div>
 
@@ -565,7 +566,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>Public Works ({typeof (creator as any).worksCount === 'number' && (creator as any).worksCount >= works.length ? (creator as any).worksCount : Math.max(works.length, (creator as any).worksCount || 0)})</span>
+              <span>Public Works ({deriveWorksCount(creator as any, works.length)})</span>
             </button>
 
             <button

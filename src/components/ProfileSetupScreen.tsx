@@ -40,6 +40,17 @@ import {
 } from '../constants/roles';
 import { updateProfileInFirestore } from '../lib/firebase';
 import { affilApi } from '../lib/affilApi';
+import { computeProfileCompletion } from '../lib/profileCompletion';
+import { ProfileCompletionRing } from './ProfileCompletionRing';
+import { parseResumeText } from '../lib/resumeParse';
+import {
+  compressImageFile,
+  validateImageFileSize,
+  validateVideoFileSize,
+  formatBytes,
+  IMAGE_HARD_MAX_BYTES,
+  PORTFOLIO_VIDEO_MAX_BYTES,
+} from '../lib/mediaLimits';
 
 interface ProfileSetupScreenProps {
   onOpenCollaborationQuestions?: () => void;
@@ -146,6 +157,14 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
   const [locationError, setLocationError] = useState<string | null>(null);
   const [socialErrors, setSocialErrors] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
+  /** Initial 5 collab questions freeze after first successful analysis/save */
+  const initialQuestionsFrozen = Boolean(
+    initialProfile.profileCompleted &&
+      (initialProfile as any).collaborationScenarios &&
+      Object.values((initialProfile as any).collaborationScenarios || {}).some(
+        (v) => typeof v === 'string' && v.trim()
+      )
+  );
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // Image Picker Modals
@@ -292,6 +311,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
         const analysisResponse = await affilApi.analyzeCollaborationProfile(answers);
         collaborationProfile = analysisResponse.collaborationProfile;
       }
+      // After first completion, scenario answers stay frozen; do not re-run analysis
 
       const updatedProfile: CreatorProfile = {
         ...initialProfile,
@@ -323,7 +343,8 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
         coverImageUrl: coverImageUrl.trim(),
         portfolios,
         profileCompleted: true,
-      };
+        worksCount: Array.isArray(portfolios) ? portfolios.length : 0,
+      } as CreatorProfile;
 
       // Persist to Firestore (source of truth for user/profile data)
       const saved = await updateProfileInFirestore(updatedProfile);
@@ -335,20 +356,58 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
     }
   };
 
+  const liveCompletion = computeProfileCompletion({
+    name: fullName,
+    primaryRole,
+    location,
+    bio,
+    avatarUrl,
+    portfolios,
+    workLinks,
+    socialLinks,
+    collaborationScenarios: {
+      q1: scenarioQ1,
+      q2: scenarioQ2,
+      q3: scenarioQ3,
+      q4: scenarioQ4,
+      q5: scenarioQ5,
+    },
+    profileCompleted: initialProfile.profileCompleted,
+  });
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 selection:bg-[var(--accent-amber)] selection:text-[var(--text-primary)] pb-24">
       
-      {/* Top Header */}
-      <div className="mb-8 text-left space-y-2">
-        <div className="editorial-kicker">
-          <span>ONBOARDING &amp; PROFILE SETUP</span>
+      {/* Top Header + circular profile completion */}
+      <div className="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div className="text-left space-y-2 flex-1">
+          <div className="editorial-kicker">
+            <span>ONBOARDING &amp; PROFILE SETUP</span>
+          </div>
+          <h1 className="font-editorial text-3xl sm:text-4xl font-bold text-[var(--text-primary)]">
+            {initialProfile.profileCompleted ? 'Edit Your Creator Profile' : 'Complete Your Creator Profile'}
+          </h1>
+          <p className="text-xs sm:text-sm text-[var(--text-secondary)]">
+            Set up your primary role, base location, work reels, social links, and collaborator roles to personalize your feed.
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-1.5">
+            {liveCompletion.checks.map((c) => (
+              <li
+                key={c.id}
+                className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                  c.done
+                    ? 'bg-[var(--accent-amber)]/15 border-[var(--accent-amber)]/40 text-[var(--text-primary)]'
+                    : 'bg-[var(--card-inner-bg)] border-[var(--card-border)] text-[var(--text-muted)]'
+                }`}
+              >
+                {c.done ? '✓ ' : ''}{c.label}
+              </li>
+            ))}
+          </ul>
         </div>
-        <h1 className="font-editorial text-3xl sm:text-4xl font-bold text-[var(--text-primary)]">
-          {initialProfile.profileCompleted ? 'Edit Your Creator Profile' : 'Complete Your Creator Profile'}
-        </h1>
-        <p className="text-xs sm:text-sm text-[var(--text-secondary)]">
-          Set up your primary role, base location, work reels, social links, and collaborator roles to personalize your feed.
-        </p>
+        <div className="shrink-0 self-center sm:self-start">
+          <ProfileCompletionRing percent={liveCompletion.percent} size={96} strokeWidth={9} label="Profile complete" />
+        </div>
       </div>
 
       {saveError && (
@@ -807,7 +866,8 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                 </label>
                 <textarea
                   value={scenarioQ1}
-                  onChange={(e) => setScenarioQ1(e.target.value)}
+                  readOnly={initialQuestionsFrozen}
+                  onChange={(e) => !initialQuestionsFrozen && setScenarioQ1(e.target.value)}
                   rows={2}
                   className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] resize-none"
                   placeholder="Share your approach..."
@@ -820,7 +880,8 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                 </label>
                 <textarea
                   value={scenarioQ2}
-                  onChange={(e) => setScenarioQ2(e.target.value)}
+                  readOnly={initialQuestionsFrozen}
+                  onChange={(e) => !initialQuestionsFrozen && setScenarioQ2(e.target.value)}
                   rows={2}
                   className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] resize-none"
                   placeholder="Share your approach..."
@@ -833,7 +894,8 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                 </label>
                 <textarea
                   value={scenarioQ3}
-                  onChange={(e) => setScenarioQ3(e.target.value)}
+                  readOnly={initialQuestionsFrozen}
+                  onChange={(e) => !initialQuestionsFrozen && setScenarioQ3(e.target.value)}
                   rows={2}
                   className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] resize-none"
                   placeholder="Share your approach..."
@@ -846,7 +908,8 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                 </label>
                 <select
                   value={scenarioQ4}
-                  onChange={(e) => setScenarioQ4(e.target.value)}
+                  disabled={initialQuestionsFrozen}
+                  onChange={(e) => !initialQuestionsFrozen && setScenarioQ4(e.target.value)}
                   className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
                 >
                   <option value="" disabled>Select an option...</option>
@@ -863,7 +926,8 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                 </label>
                 <textarea
                   value={scenarioQ5}
-                  onChange={(e) => setScenarioQ5(e.target.value)}
+                  readOnly={initialQuestionsFrozen}
+                  onChange={(e) => !initialQuestionsFrozen && setScenarioQ5(e.target.value)}
                   rows={2}
                   className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-3.5 py-2.5 text-xs text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)] resize-none"
                   placeholder="Share your thoughts..."
@@ -916,27 +980,52 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                         setResumeHint('File was empty — nothing to autofill.');
                         return;
                       }
-                      // Basic email extraction
-                      const emailMatch = trimmed.match(
-                        /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
-                      );
-                      if (emailMatch && !email.trim()) {
-                        setEmail(emailMatch[0]);
+                      const extracted = parseResumeText(trimmed);
+                      const filled: string[] = [];
+                      if (extracted.name && !fullName.trim()) {
+                        setFullName(extracted.name);
+                        filled.push('name');
                       }
-                      // Use first ~800 chars as bio seed if bio empty
-                      if (!bio.trim()) {
-                        const snippet = trimmed.replace(/\s+/g, ' ').slice(0, 800);
-                        setBio(snippet);
-                      } else {
-                        // Append a short note so user can merge
-                        setBio((prev) =>
-                          prev.trim().endsWith(trimmed.slice(0, 120))
-                            ? prev
-                            : `${prev.trim()}\n\n--- from resume ---\n${trimmed.slice(0, 400)}`
-                        );
+                      if (extracted.email && !email.trim()) {
+                        setEmail(extracted.email);
+                        filled.push('email');
+                      }
+                      if (extracted.primaryRole && !primaryRole.trim()) {
+                        setPrimaryRole(extracted.primaryRole);
+                        filled.push('primary role');
+                      }
+                      if (extracted.secondaryRoles?.length && secondaryRoles.length === 0) {
+                        setSecondaryRoles(extracted.secondaryRoles.slice(0, 4));
+                        filled.push('secondary roles');
+                      }
+                      if (extracted.socialLinks) {
+                        setSocialLinks((prev) => ({
+                          ...prev,
+                          ...Object.fromEntries(
+                            Object.entries(extracted.socialLinks || {}).filter(
+                              ([k, v]) => v && !(prev as any)[k]
+                            )
+                          ),
+                        }));
+                        filled.push('social links');
+                      }
+                      if (extracted.bio) {
+                        if (!bio.trim()) {
+                          setBio(extracted.bio);
+                          filled.push('bio');
+                        } else {
+                          setBio((prev) =>
+                            prev.includes(extracted.bio!.slice(0, 80))
+                              ? prev
+                              : `${prev.trim()}\n\n--- from resume ---\n${extracted.bio}`
+                          );
+                          filled.push('bio (appended)');
+                        }
                       }
                       setResumeHint(
-                        `Loaded “${file.name}”. Bio${emailMatch && !email.trim() ? ' and email' : ''} updated from text content.`
+                        filled.length
+                          ? `Loaded “${file.name}”. Prefill: ${filled.join(', ')}. Review and edit before saving.`
+                          : `Loaded “${file.name}”. No new fields detected — you can still copy text into bio manually.`
                       );
                     } catch {
                       setResumeHint('Could not read this file. Try a .txt or .md resume.');

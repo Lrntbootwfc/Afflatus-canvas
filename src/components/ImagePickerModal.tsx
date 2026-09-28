@@ -14,6 +14,12 @@ import {
   User as UserIcon,
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
+import {
+  compressImageFile,
+  validateImageFileSize,
+  IMAGE_HARD_MAX_BYTES,
+  formatBytes,
+} from '../lib/mediaLimits';
 
 interface ImagePickerModalProps {
   isOpen: boolean;
@@ -197,43 +203,21 @@ export const ImagePickerModal: React.FC<ImagePickerModalProps> = ({
     processImageFile(files[0]);
   };
 
-  const processImageFile = (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      alert('Please select a valid image file (JPG, PNG, WebP, etc.)');
+  const processImageFile = async (file: File) => {
+    const sizeErr = validateImageFileSize(file);
+    if (sizeErr) {
+      alert(sizeErr);
       return;
     }
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const maxDimension = isBanner ? 1280 : 640;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > maxDimension || height > maxDimension) {
-          if (width > height) {
-            height = Math.round((height * maxDimension) / width);
-            width = maxDimension;
-          } else {
-            width = Math.round((width * maxDimension) / height);
-            height = maxDimension;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
-          setPreviewUrl(compressedDataUrl);
-        }
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressedDataUrl = await compressImageFile(file, {
+        maxDimension: isBanner ? 1280 : 640,
+        isBanner,
+      });
+      setPreviewUrl(compressedDataUrl);
+    } catch (err: any) {
+      alert(err?.message || `Could not process image (max ${formatBytes(IMAGE_HARD_MAX_BYTES)}).`);
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {

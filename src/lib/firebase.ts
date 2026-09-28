@@ -669,9 +669,14 @@ export async function updateProfileInFirestore(profile: CreatorProfile): Promise
   }
   await ensureFirestoreOnline();
   const userRef = doc(db, 'users', profile.id);
+  // Keep worksCount synchronized with portfolios length (public work count)
+  const portfolioLen = Array.isArray((profile as any).portfolios)
+    ? (profile as any).portfolios.length
+    : 0;
   const payload = {
     ...profile,
     id: profile.id,
+    worksCount: portfolioLen,
     updatedAt: serverTimestamp(),
   };
   try {
@@ -1779,7 +1784,69 @@ export async function deleteAccountAndData(): Promise<void> {
 
   const uid = current.uid;
 
-  // 1. Delete Firestore-owned user document (rules enforce auth.uid == userId)
+  // 1. Clean up connections / requests involving this user so admin & peers
+  //    do not retain stale pending requests from a deleted account.
+  try {
+    await ensureFirestoreOnline();
+    const [asSender, asRecipient] = await Promise.all([
+      getDocs(query(collection(db, 'connections'), where('senderId', '==', uid))),
+      getDocs(query(collection(db, 'connections'), where('recipientId', '==', uid))),
+    ]);
+    const seen = new Set<string>();
+    for (const d of [...asSender.docs, ...asRecipient.docs]) {
+      if (seen.has(d.id)) continue;
+      seen.add(d.id);
+      try {
+        await deleteDoc(d.ref);
+      } catch (e) {
+        console.warn('[deleteAccount] connection cleanup failed', d.id, e);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[deleteAccount] connections query failed:', err?.message || err);
+  }
+
+  // 1b. Clean join / application requests owned by this user (admin panel)
+  try {
+    for (const colName of ['applications', 'joinRequests', 'accessRequests']) {
+      try {
+        const snap = await getDocs(query(collection(db, colName), where('userId', '==', uid)));
+        for (const d of snap.docs) {
+          try {
+            await deleteDoc(d.ref);
+          } catch (e) {
+            console.warn(`[deleteAccount] ${colName} cleanup failed`, d.id, e);
+          }
+        }
+      } catch {
+        // collection may not exist / no index — non-fatal
+      }
+    }
+    // Also try document id == uid in applications
+    try {
+      await deleteDoc(doc(db, 'applications', uid));
+    } catch {
+      /* ignore */
+    }
+  } catch (err: any) {
+    console.warn('[deleteAccount] application cleanup:', err?.message || err);
+  }
+
+  // 1c. Best-effort: remove user's posts (authorId == uid)
+  try {
+    const postsSnap = await getDocs(query(collection(db, 'posts'), where('authorId', '==', uid)));
+    for (const d of postsSnap.docs) {
+      try {
+        await deleteDoc(d.ref);
+      } catch (e) {
+        console.warn('[deleteAccount] post cleanup failed', d.id, e);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[deleteAccount] posts query failed:', err?.message || err);
+  }
+
+  // 2. Delete Firestore-owned user document (rules enforce auth.uid == userId)
   try {
     const userRef = doc(db, 'users', uid);
     await deleteDoc(userRef);
@@ -1788,10 +1855,10 @@ export async function deleteAccountAndData(): Promise<void> {
     console.warn('[Firestore] Profile document delete:', err?.message || err);
   }
 
-  // 2. Delete Firebase Authentication account
+  // 3. Delete Firebase Authentication account
   await fbDeleteUser(current);
 
-  // 3. Clear local session state
+  // 4. Clear local session state
   setCachedGmailAccessToken(null);
   try {
     await fbSignOut(auth);
