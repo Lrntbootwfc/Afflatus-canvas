@@ -20,6 +20,7 @@ import {
   signInWithGoogle,
   signInWithEmail,
   signUpWithEmail,
+  resendVerificationEmail,
 } from '../lib/firebase';
 import { POPULAR_LOCATIONS, validateLocation } from '../constants/roles';
 import { MapPin } from 'lucide-react';
@@ -29,19 +30,29 @@ interface AuthScreenProps {
   onBackToLanding: () => void;
 }
 
+
+/** Engine API base — production Render has no Vite /api proxy */
+function resolveAuthApiBase(): string {
+  const raw = (import.meta.env.VITE_MAIN_BACKEND_URL as string | undefined)?.trim();
+  if (!raw) return '/api';
+  const base = raw.replace(/\/$/, '');
+  return base.endsWith('/api') ? base : `${base}/api`;
+}
+
+
 export const AuthScreen: React.FC<AuthScreenProps> = ({
   onLoginSuccess,
   onBackToLanding,
 }) => {
-  // Mode: 'login' | 'signup' | 'otp_verify'
-  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'otp_verify'>('login');
+  // Mode: 'login' | 'signup' | 'email_verify_pending'
+  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'email_verify_pending'>('login');
 
   // Login Tab: 'email' | 'username'
   const [loginMethod, setLoginMethod] = useState<'email' | 'username'>('email');
 
   // Form Fields
   const [identifier, setIdentifier] = useState(''); // Email or Username
-  const [password, setPassword] = useState('password123');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
   // Signup Specific Fields
@@ -52,8 +63,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [signupLocation, setSignupLocation] = useState('');
   const [locationError, setLocationError] = useState<string | null>(null);
 
-  // OTP Verification State
-  const [otpCode, setOtpCode] = useState('');
+  // Email pending verification
   const [activeOtpEmail, setActiveOtpEmail] = useState('');
   const [receivedOtpNotice, setReceivedOtpNotice] = useState<string | null>(null);
 
@@ -86,7 +96,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       if (loginMethod === 'username' && !identifier.includes('@')) {
         // Username-only accounts must resolve to a real Firebase email session.
         // Never call onLoginSuccess with a server profile without Firebase Auth.
-        const res = await fetch('/api/auth/login', {
+        const res = await fetch(`${resolveAuthApiBase()}/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -117,146 +127,115 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     }
   };
 
-  // Step 1: Request Real OTP during Signup
-  const handleRequestOtpSignup = async (e: React.FormEvent) => {
+  // Signup: Firebase Auth create + sendEmailVerification
+  const handleEmailPasswordSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName.trim() || !signupEmail.trim() || !password) {
-      setErrorMessage('Please fill in your name, email, and password.');
+    if (!fullName.trim()) {
+      setErrorMessage('Full name is required.');
       return;
     }
-    
+    if (!signupUsername.trim() || signupUsername.trim().length < 3) {
+      setErrorMessage('Username is required (at least 3 characters).');
+      return;
+    }
+    if (!signupEmail.trim() || !signupEmail.includes('@')) {
+      setErrorMessage('A valid email address is required.');
+      return;
+    }
+    if (!password) {
+      setErrorMessage('Password is required.');
+      return;
+    }
+    if (password.length < 6) {
+      setErrorMessage('Password must be at least 6 characters.');
+      return;
+    }
+    if (!signupRole.trim()) {
+      setErrorMessage('Please select your primary role.');
+      return;
+    }
+    if (!signupLocation.trim()) {
+      setLocationError('Base location is required.');
+      setErrorMessage('Please fill in all required fields.');
+      return;
+    }
     if (!validateLocation(signupLocation)) {
       setLocationError('Please enter a valid base location (e.g., "Los Angeles, CA" or "London, UK")');
       return;
     }
     setLocationError(null);
-
     setIsLoading(true);
     setErrorMessage(null);
+    setSuccessNotice(null);
 
     try {
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: fullName,
-          username: signupUsername || fullName.toLowerCase().replace(/\s+/g, '_'),
-          email: signupEmail,
-          password,
-          primaryRole: signupRole,
-          location: signupLocation,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to send OTP code');
-      }
-
-      setActiveOtpEmail(signupEmail);
-      if (data.otp) {
-        setReceivedOtpNotice(data.otp);
-      }
-      setSuccessNotice(`Verification code sent to ${signupEmail}!`);
-      setAuthMode('otp_verify');
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Signup failed. Please try another email or username.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Step 2: Verify OTP Code and complete account creation via Firebase Auth + Firestore
-  const handleVerifyOtpSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!otpCode.trim() || otpCode.trim().length !== 6) {
-      setErrorMessage('Please enter the 6-digit verification code.');
-      return;
-    }
-
-    setIsLoading(true);
-    setErrorMessage(null);
-
-    try {
-      // Validate OTP with server (email delivery / rate-limit only)
-      const res = await fetch('/api/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: activeOtpEmail,
-          otp: otpCode.trim(),
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Invalid or expired OTP code');
-      }
-
-      // Create Firebase Auth user + Firestore profile (persistent source of truth)
-      const { profile } = await signUpWithEmail(
-        activeOtpEmail.trim().toLowerCase(),
+      const email = signupEmail.trim().toLowerCase();
+      const { verificationEmailSent } = await signUpWithEmail(
+        email,
         password,
-        fullName.trim() || activeOtpEmail.split('@')[0],
+        fullName.trim(),
         signupRole,
-        signupLocation
+        signupLocation,
+        signupUsername.trim().replace(/^@/, '')
       );
-
-      // Merge any extra fields from server response if present
-      if (data.fullProfile?.username) {
-        const merged = {
-          ...profile,
-          username: data.fullProfile.username,
-          primaryRole: data.fullProfile.primaryRole || profile.primaryRole,
-          seekingRoles: data.fullProfile.seekingRoles || profile.seekingRoles,
-        };
-        const { updateProfileInFirestore } = await import('../lib/firebase');
-        const saved = await updateProfileInFirestore(merged);
-        onLoginSuccess(saved, true);
+      setActiveOtpEmail(email);
+      setReceivedOtpNotice(null);
+      if (!verificationEmailSent) {
+        setErrorMessage(
+          'Account created but the verification email could not be sent. Try "Resend verification email" below, or check Firebase Auth email settings.'
+        );
       } else {
-        onLoginSuccess(profile, true);
+        setSuccessNotice(
+          `Account created. We sent a verification link to ${email}. Open the link, then sign in here.`
+        );
       }
+      setAuthMode('email_verify_pending');
     } catch (err: any) {
-      // If email already registered in Firebase, sign in instead
-      if (err?.code === 'auth/email-already-in-use') {
-        try {
-          const { profile } = await signInWithEmail(activeOtpEmail.trim().toLowerCase(), password);
-          onLoginSuccess(profile, false);
-          return;
-        } catch (signInErr: any) {
-          setErrorMessage(signInErr.message || 'Account exists. Please log in.');
-          return;
-        }
+      const code = err?.code || '';
+      if (code === 'auth/email-already-in-use') {
+        setErrorMessage('This email is already registered. Please sign in, or verify your email if you have not yet.');
+      } else if (code === 'auth/invalid-email') {
+        setErrorMessage('Please enter a valid email address.');
+      } else if (code === 'auth/weak-password') {
+        setErrorMessage('Password is too weak. Use at least 6 characters.');
+      } else {
+        setErrorMessage(err.message || 'Signup failed. Please try again.');
       }
-      setErrorMessage(err.message || 'Verification failed. Please check the OTP code.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Resend OTP
-  const handleResendOtp = async () => {
+  // After signup: user must open Firebase link, then sign in
+  const handleGoToLoginAfterVerify = () => {
+    setAuthMode('login');
+    setIdentifier(activeOtpEmail || signupEmail);
+    setErrorMessage(null);
+    setSuccessNotice('After clicking the link in your email, sign in with the same email and password.');
+  };
+
+  const handleResendVerification = async () => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: fullName,
-          username: signupUsername,
-          email: activeOtpEmail,
-          password,
-          primaryRole: signupRole,
-          location: signupLocation,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to resend code');
-      if (data.otp) setReceivedOtpNotice(data.otp);
-      setSuccessNotice('New verification code sent!');
+      // Must be signed in briefly to resend — sign in without assert then send then sign out
+      const { signInWithEmailAndPassword } = await import('firebase/auth');
+      const { auth, resendVerificationEmail, signOut } = await import('../lib/firebase');
+      const cred = await signInWithEmailAndPassword(auth, activeOtpEmail || signupEmail.trim().toLowerCase(), password);
+      if (cred.user.emailVerified) {
+        await signOut();
+        setSuccessNotice('Your email is already verified. Please sign in.');
+        setAuthMode('login');
+        return;
+      }
+      await resendVerificationEmail();
+      await signOut();
+      setSuccessNotice('Verification email resent. Check inbox and spam.');
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to resend OTP.');
+      setErrorMessage(
+        err?.message ||
+          'Could not resend verification email. Try signing up again or use Google sign-in.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -303,7 +282,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               <span>
                 {authMode === 'login'
                   ? 'WELCOME BACK'
-                  : authMode === 'otp_verify'
+                  : authMode === 'email_verify_pending'
                   ? 'VERIFY YOUR EMAIL'
                   : 'JOIN THE NETWORK'}
               </span>
@@ -311,15 +290,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <h2 className="font-editorial text-2xl sm:text-3xl font-bold text-[var(--text-primary)]">
               {authMode === 'login'
                 ? 'Sign in to Afflatus'
-                : authMode === 'otp_verify'
-                ? 'Enter 6-Digit OTP Code'
+                : authMode === 'email_verify_pending'
+                ? 'Verify your email'
                 : 'Create Your Profile'}
             </h2>
             <p className="text-xs text-[var(--text-secondary)]">
               {authMode === 'login'
                 ? 'Access your matches, direct proposals, and project blueprints.'
-                : authMode === 'otp_verify'
-                ? `We sent an authentic verification code to ${activeOtpEmail}`
+                : authMode === 'email_verify_pending'
+                ? `We sent a verification link to ${activeOtpEmail}`
                 : 'Build your verified creator card and find tailored collaborators.'}
             </p>
           </div>
@@ -410,11 +389,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider">
-                      Password
+                      Password *
                     </label>
-                    <span className="text-[10px] text-[var(--text-muted)] font-mono">
-                      (demo: password123)
-                    </span>
                   </div>
                   <div className="relative">
                     <Lock className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-3" />
@@ -456,14 +432,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </div>
           )}
 
-          {/* 2. SIGNUP FLOW (With OTP request) */}
+          {/* 2. SIGNUP FLOW (Firebase email verification link) */}
           {authMode === 'signup' && (
-            <form onSubmit={handleRequestOtpSignup} className="space-y-4">
+            <form onSubmit={handleEmailPasswordSignup} className="space-y-4">
               
               <div className="p-3 bg-[color-mix(in_srgb,var(--accent-amber)_10%,transparent)] border border-[color-mix(in_srgb,var(--accent-amber)_30%,transparent)] rounded-2xl text-[11px] text-[var(--text-primary)] flex items-start gap-2">
                 <Sparkles className="w-4 h-4 text-[var(--accent-amber)] shrink-0 mt-0.5" />
                 <span>
-                  <strong>Real OTP Verification:</strong> We'll send a 6-digit confirmation code to verify your creator email address.
+                  <strong>Email verification:</strong> After you create an account, we send a verification <strong>link</strong> to your inbox. Open the link, then sign in.
                 </span>
               </div>
 
@@ -505,6 +481,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     onChange={(e) => setSignupUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
                     placeholder="maya_chen_films"
                     required
+                    minLength={3}
                     className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl pl-8 pr-3.5 py-2.5 text-xs font-mono text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
                   />
                 </div>
@@ -611,7 +588,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 </div>
               </div>
 
-              {/* Request OTP Button */}
+              {/* Create account */}
               <button
                 type="submit"
                 id="btn-submit-signup"
@@ -619,110 +596,53 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 className="amber-pill-btn w-full py-3 rounded-full text-xs font-bold shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98 text-[var(--nav-item-active-text,#181614)]"
               >
                 {isLoading ? (
-                  <span className="animate-pulse">Generating OTP Code...</span>
+                  <span className="animate-pulse">Creating account...</span>
                 ) : (
                   <>
                     <KeyRound className="w-4 h-4" />
-                    <span>[ Send OTP &amp; Verify Email ]</span>
+                    <span>[ Create account ]</span>
                   </>
                 )}
               </button>
             </form>
           )}
 
-          {/* 3. OTP CODE VERIFICATION SCREEN */}
-          {authMode === 'otp_verify' && (
-            <form onSubmit={handleVerifyOtpSubmit} className="space-y-4">
-              
-              {/* Live OTP Notification Pill for instant preview verification */}
-              {receivedOtpNotice && (
-                <div className="p-3 bg-[color-mix(in_srgb,var(--accent-amber)_15%,transparent)] border border-[color-mix(in_srgb,var(--accent-amber)_40%,transparent)] rounded-2xl text-center space-y-1">
-                  <span className="text-[10px] font-bold text-[var(--accent-amber)] uppercase tracking-wider block">
-                    Security Code Sent:
-                  </span>
-                  <div className="font-mono text-2xl font-black tracking-widest text-[var(--text-primary)]">
-                    {receivedOtpNotice}
-                  </div>
-                  <p className="text-[10px] text-[var(--text-muted)]">
-                    (In preview mode, your live OTP is displayed above for instant confirmation)
-                  </p>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1.5 text-center">
-                  Enter 6-Digit Code
-                </label>
-                <div className="relative">
-                  <input
-                    id="input-otp-code"
-                    type="text"
-                    maxLength={6}
-                    value={otpCode}
-                    onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
-                    placeholder="123456"
-                    autoFocus
-                    required
-                    className="w-full bg-[var(--input-bg)] border-2 border-[var(--accent-amber)] rounded-2xl py-3 text-center text-xl font-mono tracking-widest font-bold text-[var(--input-text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-amber)]"
-                  />
-                </div>
+          {/* 3. EMAIL VERIFICATION PENDING */}
+          {authMode === 'email_verify_pending' && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-2xl border border-[var(--card-border)] bg-[var(--card-inner-bg)] text-xs text-[var(--text-secondary)] space-y-2">
+                <p className="font-semibold text-[var(--text-primary)]">Verify your email</p>
+                <p>
+                  We created your account and sent a verification <strong>link</strong> to{' '}
+                  <span className="font-mono text-[var(--text-primary)]">{activeOtpEmail || signupEmail}</span>.
+                </p>
+                <p>
+                  Open the email (check spam), click the link, then come back and sign in with the same email and password.
+                </p>
               </div>
-
-              {/* Quick fill button */}
-              {receivedOtpNotice && (
-                <button
-                  type="button"
-                  onClick={() => setOtpCode(receivedOtpNotice)}
-                  className="w-full py-1.5 text-[11px] font-mono text-[var(--accent-amber)] hover:underline cursor-pointer text-center"
-                >
-                  ⚡ Preview verification code: {receivedOtpNotice}
-                </button>
-              )}
-
               <button
-                type="submit"
-                id="btn-verify-otp-submit"
+                type="button"
+                id="btn-go-login-after-verify"
+                onClick={handleGoToLoginAfterVerify}
                 disabled={isLoading}
-                className="amber-pill-btn w-full py-3 rounded-full text-xs font-bold shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98 text-[var(--nav-item-active-text,#181614)]"
+                className="amber-pill-btn w-full py-3 rounded-full text-xs font-bold shadow-md flex items-center justify-center gap-2 cursor-pointer"
               >
-                {isLoading ? (
-                  <span className="animate-pulse">Verifying Code...</span>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-4 h-4" />
-                    <span>[ Verify &amp; Create Profile ]</span>
-                  </>
-                )}
+                I verified — go to Sign in
               </button>
-
-              <div className="flex items-center justify-between text-xs pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthMode('signup');
-                    setErrorMessage(null);
-                  }}
-                  className="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-                >
-                  ← Edit details
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleResendOtp}
-                  disabled={isLoading}
-                  className="text-[var(--accent-amber)] hover:underline flex items-center gap-1 cursor-pointer font-medium"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Resend Code</span>
-                </button>
-              </div>
-
-            </form>
+              <button
+                type="button"
+                id="btn-resend-verification"
+                onClick={handleResendVerification}
+                disabled={isLoading}
+                className="w-full py-2.5 rounded-full text-xs font-semibold border border-[var(--card-border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+              >
+                {isLoading ? 'Please wait…' : 'Resend verification email'}
+              </button>
+            </div>
           )}
 
-          {/* Divider */}
-          {authMode !== 'otp_verify' && (
+          {/* 4. Google + mode switch (hidden while waiting for email verification) */}
+          {authMode !== 'email_verify_pending' && (
             <>
               <div className="relative my-6 text-center">
                 <div className="absolute inset-0 flex items-center">

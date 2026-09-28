@@ -5,6 +5,8 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendEmailVerification,
+  reload,
   signOut as fbSignOut,
   onAuthStateChanged,
   deleteUser as fbDeleteUser,
@@ -429,24 +431,51 @@ export async function signInWithGoogle(fallbackEmail?: string, fallbackName?: st
 /**
  * Sign in with Email / Password
  */
+/** True if this Firebase user signed in only with email/password (not Google). */
+export function isEmailPasswordOnlyUser(user: FirebaseUser): boolean {
+  const providers = user.providerData.map((p) => p.providerId);
+  if (providers.includes('google.com')) return false;
+  return providers.includes('password') || providers.length === 0;
+}
+
+/**
+ * Email/password users must verify email before using the app.
+ * Google Sign-In users are unchanged (Firebase marks them verified).
+ */
+export async function assertEmailVerifiedOrThrow(user: FirebaseUser): Promise<void> {
+  await reload(user);
+  const fresh = auth.currentUser;
+  if (!fresh) throw new Error('Session expired. Please sign in again.');
+  if (!isEmailPasswordOnlyUser(fresh)) return;
+  if (fresh.emailVerified) return;
+  await fbSignOut(auth);
+  const err = new Error(
+    'Please verify your email before signing in. Open the link we sent to your inbox (and spam folder), then try again.'
+  );
+  (err as any).code = 'auth/email-not-verified';
+  throw err;
+}
+
+/** Resend Firebase verification email for the currently signed-in user (if any). */
+export async function resendVerificationEmail(): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error('No signed-in user to verify.');
+  await sendEmailVerification(user);
+}
+
 export async function signInWithEmail(email: string, pass: string): Promise<{ user: FirebaseUser; profile: CreatorProfile }> {
+  // Production: login must NOT auto-create accounts.
   try {
     const result = await signInWithEmailAndPassword(auth, email, pass);
+    await assertEmailVerifiedOrThrow(result.user);
     const profile = await syncUserProfileToFirestore(result.user);
     return { user: result.user, profile };
   } catch (error: any) {
-    // If user not found, try to auto-create user for frictionless onboarding
-    if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
-      try {
-        const createResult = await createUserWithEmailAndPassword(auth, email, pass);
-        const profile = await syncUserProfileToFirestore(createResult.user, {
-          name: email.split('@')[0],
-          email: email
-        });
-        return { user: createResult.user, profile };
-      } catch (createErr) {
-        throw error;
-      }
+    if (error?.code === 'auth/email-not-verified') throw error;
+    if (error?.code === 'auth/user-not-found' || error?.code === 'auth/invalid-credential') {
+      const err = new Error('No account found for this email, or wrong password. Please sign up or try again.');
+      (err as any).code = error.code;
+      throw err;
     }
     throw error;
   }
@@ -455,15 +484,66 @@ export async function signInWithEmail(email: string, pass: string): Promise<{ us
 /**
  * Sign Up with Email / Password
  */
-export async function signUpWithEmail(email: string, pass: string, name?: string, role?: string, location?: string): Promise<{ user: FirebaseUser; profile: CreatorProfile }> {
+export async function signUpWithEmail(email: string, pass: string, name?: string, role?: string, location?: string, username?: string): Promise<{ user: FirebaseUser; profile: CreatorProfile; verificationEmailSent: boolean }> {
   const result = await createUserWithEmailAndPassword(auth, email, pass);
-  const profile = await syncUserProfileToFirestore(result.user, {
-    name: name || email.split('@')[0],
-    email: email,
-    primaryRole: role || 'Cinematographer',
-    location: location || 'not_specified'
-  });
-  return { user: result.user, profile };
+
+  // Send Firebase Auth verification email (works on any recipient; no Resend/domain required)
+  let verificationEmailSent = false;
+  try {
+    await sendEmailVerification(result.user);
+    verificationEmailSent = true;
+  } catch (verifyErr) {
+    console.error('[Auth] sendEmailVerification failed:', verifyErr);
+    // Account exists; user can request resend after login attempt
+  }
+
+  // Profile write while still signed in (required by typical Firestore rules).
+  // If rules are misconfigured, still finish signup + verification email; profile can sync on first verified login.
+  let profile: CreatorProfile;
+  try {
+    profile = await syncUserProfileToFirestore(result.user, {
+      name: name || email.split('@')[0],
+      email: email,
+      primaryRole: role || 'Cinematographer',
+      location: location || 'not_specified',
+      username: username || (email.split('@')[0]),
+    });
+  } catch (profileErr) {
+    console.warn('[Auth] Profile write deferred (will retry on verified login):', profileErr);
+    profile = {
+      id: result.user.uid,
+      username: email.split('@')[0],
+      email,
+      name: name || email.split('@')[0],
+      avatarUrl: '',
+      bio: '',
+      primaryRole: role || 'Cinematographer',
+      secondaryRoles: [],
+      seekingRoles: [],
+      location: location || 'not_specified',
+      travelRadiusMiles: 0,
+      dayRateUsd: 0,
+      hourlyRateUsd: 0,
+      pastBudgetTiers: [],
+      communicationStyle: 'collaborative_brainstormer',
+      gearItems: [],
+      portfolios: [],
+      workLinks: [],
+      socialLinks: {},
+      profileCompleted: false,
+      userRole: 'collaborator',
+      createdAt: new Date().toISOString(),
+    } as CreatorProfile;
+  }
+
+  // Do not leave an unverified session active — user must verify then sign in
+  try {
+    await fbSignOut(auth);
+  } catch {
+    /* ignore */
+  }
+
+  return { user: result.user, profile, verificationEmailSent };
 }
 
 /**

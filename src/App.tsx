@@ -99,6 +99,23 @@ export default function App() {
           return;
         }
 
+        // Email/password users must verify email before session is restored into the app.
+        // Google Sign-In is unchanged (provider google.com / emailVerified).
+        const providerIds = (fbUser.providerData || []).map((p) => p.providerId);
+        const isGoogle = providerIds.includes('google.com');
+        if (!isGoogle && !fbUser.emailVerified) {
+          try {
+            await firebaseSignOut();
+          } catch {
+            /* ignore */
+          }
+          setAuth(null);
+          setCurrentUser(null);
+          setCurrentScreen('auth');
+          setIsLoading(false);
+          return;
+        }
+
         // Prefer Firestore profile; create/sync baseline if missing
         let profile = await getProfileFromFirestore(fbUser.uid);
         if (!profile) {
