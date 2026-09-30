@@ -362,7 +362,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                         <div
                           className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed ${
                             mine
-                              ? 'bg-[var(--accent-amber)] text-[#181614] rounded-br-md'
+                              ? 'bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] rounded-br-md'
                               : 'bg-[var(--card-inner-bg)] text-[var(--text-primary)] border border-[var(--card-inner-border)] rounded-bl-md'
                           }`}
                         >
@@ -384,7 +384,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                               )}
                               <a
                                 href={(m as any).sharedPost.url || `/?post=${(m as any).sharedPost.postId}`}
-                                className={`inline-block mt-1 text-[10px] font-bold underline ${mine ? 'text-[#181614]' : 'text-[var(--accent-amber)]'}`}
+                                className={`inline-block mt-1 text-[10px] font-bold underline ${mine ? 'text-[var(--btn-on-accent,#14100C)]' : 'text-[var(--accent-amber)]'}`}
                               >
                                 View Post
                               </a>
@@ -394,7 +394,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                           )}
                           <div
                             className={`text-[9px] mt-1 ${
-                              mine ? 'text-[#181614]/70' : 'text-[var(--text-muted)]'
+                              mine ? 'text-[var(--btn-on-accent,#14100C)]/80' : 'text-[var(--text-muted)]'
                             }`}
                           >
                             {m.createdAt
@@ -427,7 +427,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
                   <button
                     type="submit"
                     disabled={sending || !draft.trim()}
-                    className="p-2.5 rounded-xl bg-[var(--accent-amber)] text-[#181614] disabled:opacity-50 cursor-pointer shrink-0"
+                    className="p-2.5 rounded-xl bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] disabled:opacity-50 cursor-pointer shrink-0"
                   >
                     {sending ? (
                       <Loader2 className="w-4 h-4 animate-spin" />

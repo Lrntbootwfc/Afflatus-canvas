@@ -40,7 +40,7 @@ export const WorkCard: React.FC<WorkCardProps> = ({ work, onOpenDetail, onViewCr
               {work.category}
             </span>
 
-            <span className="px-2.5 py-1 rounded-md text-[10px] font-mono font-medium bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] shadow-sm flex items-center gap-1">
+            <span className="px-2.5 py-1 rounded-md text-[10px] font-mono font-medium bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] shadow-sm flex items-center gap-1">
               {work.mediaType === 'video' ? <Play className="w-2.5 h-2.5 fill-current" /> : <Layers className="w-2.5 h-2.5" />}
               <span className="capitalize">{work.platform}</span>
             </span>

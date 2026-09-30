@@ -510,8 +510,8 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             onClick={() => setMainTab('explore')}
             className={`px-4 py-2 text-sm font-bold rounded-full transition-colors ${
               mainTab === 'explore'
-                ? 'bg-[var(--text-primary)] text-[var(--card-bg)]'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                ? 'bg-[var(--nav-item-active-bg)] text-[var(--nav-item-active-text)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-transparent'
             }`}
           >
             Explore Creators
@@ -520,8 +520,8 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             onClick={() => setMainTab('feed')}
             className={`px-4 py-2 text-sm font-bold rounded-full transition-colors ${
               mainTab === 'feed'
-                ? 'bg-[var(--text-primary)] text-[var(--card-bg)]'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                ? 'bg-[var(--nav-item-active-bg)] text-[var(--nav-item-active-text)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-transparent'
             }`}
           >
             Explore Projects

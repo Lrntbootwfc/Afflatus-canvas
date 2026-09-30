@@ -338,6 +338,7 @@
 /* EMERALD 35MM PALETTE - LIGHT & DARK */
 [data-palette="emerald"][data-mode="light"],
 [data-theme="emerald-light"] {
+  /* contrast: dark green fill needs light on-accent text */
   --bg-canvas: #F0F7F2;
   --bg-gradient: radial-gradient(135% 85% at 50% -10%, #EBF6EF 0%, #F0F7F2 45%, #E1EFE5 100%);
   --text-primary: #062010;
@@ -365,7 +366,7 @@
   --tag-bg: #E6F3E9;
   --tag-border: #D3E8D8;
   --accent-amber: #059669;
-  --btn-on-accent: #14100C;
+  --btn-on-accent: #FFFFFF;
   --accent-amber-hover: #047857;
   --accent-secondary: #0D9488;
   --accent-secondary-hover: #0F766E;
@@ -1097,3 +1098,11 @@ html.dark .card-obsidian {
   box-shadow: 0 4px 14px 0 rgba(0, 0, 0, 0.08);
 }
 
+
+
+/* -------------------------------------------------------------------------
+   on-accent text safety — message bubbles / accent fills
+   ------------------------------------------------------------------------- */
+.on-accent-fg {
+  color: var(--btn-on-accent, #14100C) !important;
+}
