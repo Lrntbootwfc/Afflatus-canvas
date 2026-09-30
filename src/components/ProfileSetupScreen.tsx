@@ -378,7 +378,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 selection:bg-[var(--accent-amber)] selection:text-[var(--text-primary)] pb-24">
       
-      {/* Top Header + circular profile completion */}
+      {/* Top Header + circular profile completion (ring only — no checklist text) */}
       <div className="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div className="text-left space-y-2 flex-1">
           <div className="editorial-kicker">
@@ -390,23 +390,9 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
           <p className="text-xs sm:text-sm text-[var(--text-secondary)]">
             Set up your primary role, base location, work reels, social links, and collaborator roles to personalize your feed.
           </p>
-          <ul className="mt-2 flex flex-wrap gap-1.5">
-            {liveCompletion.checks.map((c) => (
-              <li
-                key={c.id}
-                className={`text-[10px] px-2 py-0.5 rounded-full border ${
-                  c.done
-                    ? 'bg-[var(--accent-amber)]/15 border-[var(--accent-amber)]/40 text-[var(--text-primary)]'
-                    : 'bg-[var(--card-inner-bg)] border-[var(--card-border)] text-[var(--text-muted)]'
-                }`}
-              >
-                {c.done ? '✓ ' : ''}{c.label}
-              </li>
-            ))}
-          </ul>
         </div>
         <div className="shrink-0 self-center sm:self-start">
-          <ProfileCompletionRing percent={liveCompletion.percent} size={96} strokeWidth={9} label="Profile complete" />
+          <ProfileCompletionRing percent={liveCompletion.percent} size={96} strokeWidth={9} label="" />
         </div>
       </div>
 
