@@ -194,14 +194,6 @@ export const CreatorDashboardView: React.FC<CreatorDashboardViewProps> = ({
   const [newGearCategory, setNewGearCategory] = useState('Camera');
   const [newGearOwnership, setNewGearOwnership] = useState<OwnershipStatus>('owned');
 
-  // Broadcast Requirement State
-  const [broadcastRole, setBroadcastRole] = useState('Director of Photography (DP)');
-  const [broadcastDates, setBroadcastDates] = useState('Oct 14 - Oct 16, 2026');
-  const [broadcastBudget, setBroadcastBudget] = useState('$850/day (3 shoot days)');
-  const [broadcastLocation, setBroadcastLocation] = useState('Los Angeles, CA (Studio & Location)');
-  const [broadcastNotes, setBroadcastNotes] = useState('Requires anamorphic lens package and wireless monitor rig.');
-  const [broadcastSuccess, setBroadcastSuccess] = useState(false);
-
   // Collaborator Explorer Search & Filters
   const [selectedDiscipline, setSelectedDiscipline] = useState<string>('All Disciplines');
   const [collaboratorSearchQuery, setCollaboratorSearchQuery] = useState<string>('');
@@ -276,26 +268,6 @@ export const CreatorDashboardView: React.FC<CreatorDashboardViewProps> = ({
         : [...current, tag];
       return { ...prev, specialtyTags: updated };
     });
-  };
-
-  const handleBroadcastRequirement = async () => {
-    const updatedReq = {
-      roleNeeded: broadcastRole,
-      dates: broadcastDates,
-      budget: broadcastBudget,
-      location: broadcastLocation,
-      notes: broadcastNotes,
-    };
-    const updatedProfile = {
-      ...formData,
-      activeBroadcastRequirement: updatedReq,
-    };
-    setFormData(updatedProfile);
-    if (onSaveProfile) {
-      await onSaveProfile(updatedProfile);
-    }
-    setBroadcastSuccess(true);
-    setTimeout(() => setBroadcastSuccess(false), 3500);
   };
 
   const handleCopyDossier = () => {
@@ -999,105 +971,6 @@ export const CreatorDashboardView: React.FC<CreatorDashboardViewProps> = ({
               </button>
             </div>
           </div>
-
-          {/* Quick Broadcast Requirement Form (Allows creator to broadcast crew needs) */}
-          <div className="card-warm-white rounded-3xl p-6 sm:p-7 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="editorial-kicker text-[10px] mb-1">
-                  <span>PRODUCER BROADCAST</span>
-                </div>
-                <h3 className="font-editorial text-xl font-bold text-[#141210]">
-                  Broadcast a Crew Requirement
-                </h3>
-              </div>
-              <span className="text-[11px] px-3 py-1 rounded-full bg-[#E58B13]/15 text-[#E58B13] font-bold">
-                Instant Feed Match
-              </span>
-            </div>
-
-            <p className="text-xs text-[#706658]">
-              Need a collaborator right now? Broadcast your specific role, budget cap, dates, and gear requirements to matching creators in the network.
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              <div>
-                <label className="text-[11px] font-bold text-[#181614] block mb-1">Role Needed</label>
-                <input
-                  type="text"
-                  value={broadcastRole}
-                  onChange={(e) => setBroadcastRole(e.target.value)}
-                  placeholder="e.g. 1st Assistant Camera (Focus Puller)"
-                  className="w-full bg-[#FAF6EE] border border-[#D9CEC1] rounded-xl px-3 py-2 text-xs text-[#181614] focus:outline-none focus:border-[#E58B13]"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold text-[#181614] block mb-1">Shoot Dates</label>
-                <input
-                  type="text"
-                  value={broadcastDates}
-                  onChange={(e) => setBroadcastDates(e.target.value)}
-                  placeholder="e.g. Oct 14 - Oct 16 (3 Days)"
-                  className="w-full bg-[#FAF6EE] border border-[#D9CEC1] rounded-xl px-3 py-2 text-xs text-[#181614] focus:outline-none focus:border-[#E58B13]"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold text-[#181614] block mb-1">Allocated Budget Rate</label>
-                <input
-                  type="text"
-                  value={broadcastBudget}
-                  onChange={(e) => setBroadcastBudget(e.target.value)}
-                  placeholder="e.g. $750/day (Kit included)"
-                  className="w-full bg-[#FAF6EE] border border-[#D9CEC1] rounded-xl px-3 py-2 text-xs text-[#181614] focus:outline-none focus:border-[#E58B13]"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold text-[#181614] block mb-1">Shoot Location</label>
-                <input
-                  type="text"
-                  value={broadcastLocation}
-                  onChange={(e) => setBroadcastLocation(e.target.value)}
-                  placeholder="e.g. Los Angeles, CA"
-                  className="w-full bg-[#FAF6EE] border border-[#D9CEC1] rounded-xl px-3 py-2 text-xs text-[#181614] focus:outline-none focus:border-[#E58B13]"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-[11px] font-bold text-[#181614] block mb-1">Specific Gear & Rig Requirements</label>
-              <input
-                type="text"
-                value={broadcastNotes}
-                onChange={(e) => setBroadcastNotes(e.target.value)}
-                placeholder="e.g. Must bring wireless follow focus (Tilta Nucleus/DJI Focus) and director monitor."
-                className="w-full bg-[#FAF6EE] border border-[#D9CEC1] rounded-xl px-3 py-2 text-xs text-[#181614] focus:outline-none focus:border-[#E58B13]"
-              />
-            </div>
-
-            <div className="flex items-center justify-between pt-2">
-              {broadcastSuccess ? (
-                <span className="text-xs font-bold text-[#16A34A] flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4" />
-                  Requirement broadcasted to matching creators!
-                </span>
-              ) : (
-                <span className="text-[11px] text-[#8C7862]">Broadcasted to verified creators within travel radius</span>
-              )}
-
-              <button
-                type="button"
-                onClick={handleBroadcastRequirement}
-                className="px-5 py-2 rounded-full bg-[#181614] text-[#FBF7F0] text-xs font-bold hover:bg-[#2C2723] transition-colors flex items-center gap-2 cursor-pointer"
-              >
-                <Send className="w-3.5 h-3.5 text-[#E58B13]" />
-                <span>Broadcast Requirement</span>
-              </button>
-            </div>
-          </div>
-        </div>
 
         {/* Right Column: Live One-Sheet Dossier & Readiness Checklist (5 Cols) */}
         <div className="lg:col-span-5 space-y-6">

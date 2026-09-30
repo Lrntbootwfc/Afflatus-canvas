@@ -46,10 +46,8 @@ import { parseResumeText } from '../lib/resumeParse';
 import {
   compressImageFile,
   validateImageFileSize,
-  validateVideoFileSize,
   formatBytes,
   IMAGE_HARD_MAX_BYTES,
-  PORTFOLIO_VIDEO_MAX_BYTES,
 } from '../lib/mediaLimits';
 
 interface ProfileSetupScreenProps {

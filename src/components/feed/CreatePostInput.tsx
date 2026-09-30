@@ -5,7 +5,6 @@ import { CreatorProfile } from '../../types';
 import {
   compressImageFile,
   validateImageFileSize,
-  validateVideoFileSize,
   IMAGE_HARD_MAX_BYTES,
   formatBytes,
 } from '../../lib/mediaLimits';
@@ -29,14 +28,8 @@ export const CreatePostInput: React.FC<CreatePostInputProps> = ({ currentUser, o
     if (!file) return;
     setMediaError(null);
 
-    if (file.type.startsWith('video/')) {
-      const verr = validateVideoFileSize(file, 'post');
-      if (verr) {
-        setMediaError(verr);
-        return;
-      }
-      // Posts currently store imageUrl data URLs; video URL path reserved for future storage
-      setMediaError('Video posts require Cloud Storage. Please use an image for now (max 1 MB compressed).');
+    if (!file.type.startsWith('image/')) {
+      setMediaError('Please select an image (JPG, PNG, WebP). Video upload is disabled until Storage is enabled.');
       return;
     }
 
@@ -130,7 +123,7 @@ export const CreatePostInput: React.FC<CreatePostInputProps> = ({ currentUser, o
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,video/*"
+            accept="image/*"
             className="hidden"
             onChange={handleImageUpload}
           />
@@ -141,10 +134,10 @@ export const CreatePostInput: React.FC<CreatePostInputProps> = ({ currentUser, o
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--card-border)] cursor-pointer disabled:opacity-50"
           >
             <ImageIcon size={18} />
-            <span>{isCompressing ? 'Compressing…' : 'Media'}</span>
+            <span>{isCompressing ? 'Compressing…' : 'Image'}</span>
           </button>
           <span className="text-[10px] text-[var(--text-muted)]">
-            Images max {formatBytes(IMAGE_HARD_MAX_BYTES)} (auto-compressed)
+            Images only · max {formatBytes(IMAGE_HARD_MAX_BYTES)} (auto-compressed)
           </span>
         </div>
         <button
