@@ -1,4 +1,11 @@
 import { deriveWorksCount } from '../../lib/profileCompletion';
+import {
+  getTraitEntries,
+  computeOverallConfidencePercent,
+  isNeutralPlaceholder,
+  ratingSectionTitle,
+  ratingSectionSubtitle,
+} from '../../lib/collaborationRating';
 import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft,
@@ -842,28 +849,59 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                   </div>
                 )}
 
-                {/* Collaboration Profile Ratings */}
-                {creator.collaborationProfile && (
+                {/* Collaboration ratings: scenario Qs + progressive behavioural + peer feedback */}
+                {creator.collaborationProfile && getTraitEntries(creator.collaborationProfile as any).length > 0 && (
                   <div className="card-warm-white p-6 rounded-3xl border border-[var(--card-border)] space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">Peer Ratings</h4>
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                        {ratingSectionTitle(creator.collaborationProfile as any)}
+                      </h4>
                       <span className="text-[10px] bg-[var(--card-inner-bg)] px-2 py-0.5 rounded-full border border-[var(--card-inner-border)] text-[var(--text-secondary)]">
-                        {creator.collaborationProfile.feedbackCount || 0} Reviews
+                        {Number((creator.collaborationProfile as any).feedbackCount) || 0} peer reviews
                       </span>
                     </div>
+                    <p className="text-[10px] text-[var(--text-muted)] leading-snug">
+                      {ratingSectionSubtitle(creator.collaborationProfile as any)}
+                    </p>
+
+                    {/* Real overall confidence (not a trait row) */}
+                    <div className="p-3 rounded-2xl bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)]">
+                      <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-[var(--text-primary)] mb-1.5">
+                        <span>Signal confidence</span>
+                        <span className="font-mono text-[var(--accent-amber)]">
+                          {computeOverallConfidencePercent(creator.collaborationProfile as any)}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full bg-[var(--card-bg)] rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-[var(--accent-amber)] rounded-full transition-all"
+                          style={{
+                            width: `${computeOverallConfidencePercent(creator.collaborationProfile as any)}%`,
+                          }}
+                        />
+                      </div>
+                      <p className="text-[9px] text-[var(--text-muted)] mt-1.5">
+                        From analysis confidence, behavioural follow-ups, and peer reviews — not a hardcoded score.
+                      </p>
+                    </div>
+
+                    {isNeutralPlaceholder(creator.collaborationProfile as any) && (
+                      <p className="text-[10px] text-[var(--text-secondary)] italic">
+                        Scores are still near neutral (5/10). They move as scenario analysis, behavioural questions, and peer feedback accumulate.
+                      </p>
+                    )}
+
                     <div className="space-y-3">
-                      {Object.entries(creator.collaborationProfile)
-                        .filter(([k]) => k !== 'feedbackCount')
-                        .map(([trait, score]) => (
+                      {getTraitEntries(creator.collaborationProfile as any).map(({ key: trait, score }) => (
                         <div key={trait}>
                           <div className="flex items-center justify-between text-[10px] font-semibold text-[var(--text-primary)] mb-1 uppercase tracking-wider">
-                            <span>{trait.replace('_', ' ')}</span>
-                            <span>{Number(score).toFixed(1)}/10</span>
+                            <span>{trait.replace(/_/g, ' ')}</span>
+                            <span>{score.toFixed(1)}/10</span>
                           </div>
                           <div className="h-1.5 w-full bg-[var(--card-inner-bg)] rounded-full overflow-hidden">
-                            <div 
+                            <div
                               className="h-full bg-[var(--accent-amber)] rounded-full"
-                              style={{ width: `${(Number(score) / 10) * 100}%` }}
+                              style={{ width: `${(score / 10) * 100}%` }}
                             />
                           </div>
                         </div>

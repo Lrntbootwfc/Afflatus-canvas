@@ -19,6 +19,10 @@ import type {
   OwnershipStatus,
   MediaType
 } from '../types';
+import {
+  getTraitEntries,
+  computeOverallConfidencePercent,
+} from '../lib/collaborationRating';
 
 interface CreatorProfileViewProps {
   profile: CreatorProfile;
@@ -526,15 +530,19 @@ export const CreatorProfileView: React.FC<CreatorProfileViewProps> = ({
               </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {Object.entries(formData.collaborationProfile)
-                  .filter(([key]) => key !== 'confidenceScores')
-                  .map(([dimension, score]) => (
+                <div className="col-span-2 sm:col-span-4 p-3 bg-[#0C0E14] border border-[#222738] rounded-xl flex items-center justify-between">
+                  <span className="text-[10px] text-[#94A3B8] uppercase tracking-wider font-semibold">Signal confidence</span>
+                  <span className="text-lg font-bold text-[#E58B13] font-mono">
+                    {computeOverallConfidencePercent(formData.collaborationProfile as any)}%
+                  </span>
+                </div>
+                {getTraitEntries(formData.collaborationProfile as any).map(({ key: dimension, score }) => (
                     <div key={dimension} className="p-3 bg-[#0C0E14] border border-[#222738] rounded-xl flex flex-col items-center text-center justify-center gap-1">
                       <span className="text-[10px] text-[#94A3B8] uppercase tracking-wider font-semibold">
-                        {dimension.replace('_', ' ')}
+                        {dimension.replace(/_/g, ' ')}
                       </span>
                       <span className="text-xl font-bold text-[#F8FAFC] font-mono">
-                        {typeof score === 'number' ? score.toFixed(1) : score}
+                        {score.toFixed(1)}
                       </span>
                     </div>
                   ))}
