@@ -17,7 +17,7 @@ import { useTheme } from '../context/ThemeContext';
 import { UserAvatar } from './UserAvatar';
 import type { CreatorProfile } from '../types';
 import { NotificationsPanel } from './messaging/NotificationsPanel';
-import { subscribeToNotifications } from '../lib/firebase';
+import { subscribeToNotifications, subscribeToUserConnections } from '../lib/firebase';
 
 interface HeaderNavProps {
   currentScreen: 'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore';
@@ -46,6 +46,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [messageUnreadCount, setMessageUnreadCount] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
 
@@ -65,7 +66,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Live unread notification count
+  // Live unread notification count (Network bell)
   useEffect(() => {
     if (!currentUser?.id) {
       setUnreadCount(0);
@@ -73,6 +74,22 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
     }
     const unsub = subscribeToNotifications(currentUser.id, (list) => {
       setUnreadCount(list.filter((n) => !n.read).length);
+    });
+    return () => unsub();
+  }, [currentUser?.id]);
+
+  // Live unread message count (Messages nav)
+  useEffect(() => {
+    if (!currentUser?.id) {
+      setMessageUnreadCount(0);
+      return;
+    }
+    const unsub = subscribeToUserConnections(currentUser.id, (list) => {
+      const total = list.reduce((sum, c) => {
+        const n = Number((c.unreadCounts || {})[currentUser.id] || 0);
+        return sum + (Number.isFinite(n) ? n : 0);
+      }, 0);
+      setMessageUnreadCount(total);
     });
     return () => unsub();
   }, [currentUser?.id]);
@@ -148,12 +165,17 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                 id="header-messages-btn"
                 type="button"
                 onClick={() => onOpenMessenger()}
-                className="p-2 sm:px-3 sm:py-1.5 rounded-full bg-[var(--nav-item-bg)] hover:bg-[var(--nav-item-hover)] text-[var(--nav-text)] border border-[var(--nav-border)] transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                className="relative p-2 sm:px-3 sm:py-1.5 rounded-full bg-[var(--nav-item-bg)] hover:bg-[var(--nav-item-hover)] text-[var(--nav-text)] border border-[var(--nav-border)] transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
                 title="Messages"
                 aria-label="Open messages"
               >
                 <MessageSquare className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
                 <span className="hidden lg:inline text-[11px] font-medium">Messages</span>
+                {messageUnreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                    {messageUnreadCount > 9 ? '9+' : messageUnreadCount}
+                  </span>
+                )}
               </button>
             )}
 

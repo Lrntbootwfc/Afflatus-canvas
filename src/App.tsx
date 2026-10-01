@@ -19,10 +19,11 @@ import { MessengerDrawer } from './components/messaging/MessengerDrawer';
 import { ApplyJoinScreen } from './components/access/ApplyJoinScreen';
 import { AdminApplicationsPanel } from './components/access/AdminApplicationsPanel';
 import { isAdminEmail } from './lib/adminConfig';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ClipboardList } from 'lucide-react';
 import {
   auth,
   onAuthStateChanged,
+  listPendingApplications,
   getProfileFromFirestore,
   syncUserProfileToFirestore,
   signOut as firebaseSignOut,
@@ -39,6 +40,7 @@ export default function App() {
     'landing' | 'auth' | 'onboarding' | 'dashboard' | 'explore' | 'collab-questions' | 'apply' | 'pending' | 'rejected'
   >('landing');
   const [adminAppsOpen, setAdminAppsOpen] = useState(false);
+  const [pendingAppCount, setPendingAppCount] = useState(0);
 
   const [currentUser, setCurrentUser] = useState<CreatorProfile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -99,16 +101,13 @@ export default function App() {
           return;
         }
 
-        // Email/password users must verify email before session is restored into the app.
-        // Google Sign-In is unchanged (provider google.com / emailVerified).
+        // Email/password users must verify email before entering the app.
+        // Do NOT signOut here — that races with signup (profile write + sendEmailVerification)
+        // and causes permission-denied / "Session expired". signUpWithEmail signs out itself
+        // after those steps; login uses assertEmailVerifiedOrThrow.
         const providerIds = (fbUser.providerData || []).map((p) => p.providerId);
         const isGoogle = providerIds.includes('google.com');
         if (!isGoogle && !fbUser.emailVerified) {
-          try {
-            await firebaseSignOut();
-          } catch {
-            /* ignore */
-          }
           setAuth(null);
           setCurrentUser(null);
           setCurrentScreen('auth');
@@ -146,7 +145,32 @@ export default function App() {
   }, []);
 
 
-  // Live profile updates (application approval while waiting on pending screen)
+  // Admin: pending join applications count (compact FAB badge, bottom-right)
+  useEffect(() => {
+    if (!currentUser?.email || !isAdminEmail(currentUser.email)) {
+      setPendingAppCount(0);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const list = await listPendingApplications();
+        if (!cancelled) setPendingAppCount(Array.isArray(list) ? list.length : 0);
+      } catch (err) {
+        console.warn('[Admin] pending application count failed:', err);
+        // Keep last known count on transient errors; only clear if first load fails
+      }
+    };
+    tick();
+    // Faster while panel closed so badge stays accurate; panel open refreshes on close
+    const interval = setInterval(tick, adminAppsOpen ? 8000 : 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [currentUser?.email, adminAppsOpen]);
+
+    // Live profile updates (application approval while waiting on pending screen)
   useEffect(() => {
     if (!currentUser?.id) return;
     const unsub = subscribeToUserProfile(currentUser.id, (profile) => {
@@ -563,13 +587,29 @@ export default function App() {
           onClose={() => setAdminAppsOpen(false)}
         />
       )}
-      {currentUser && isAdminEmail(currentUser.email) && currentScreen === 'dashboard' && (
+      {/* Admin applications — compact FAB, always bottom-right when admin is signed in */}
+      {currentUser && isAdminEmail(currentUser.email) && (
         <button
           type="button"
           onClick={() => setAdminAppsOpen(true)}
-          className="fixed bottom-4 left-4 z-40 rounded-full border border-[var(--card-border)] bg-[var(--card-bg)] px-3 py-2 text-[10px] font-mono font-semibold text-[var(--text-muted)] shadow-md hover:text-[var(--text-primary)]"
+          title={
+            pendingAppCount > 0
+              ? `${pendingAppCount} pending application${pendingAppCount === 1 ? '' : 's'}`
+              : 'Pending applications'
+          }
+          aria-label={
+            pendingAppCount > 0
+              ? `Applications, ${pendingAppCount} pending`
+              : 'Open pending applications'
+          }
+          className="fixed bottom-4 right-4 z-[80] flex h-12 w-12 items-center justify-center rounded-full border border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--text-primary)] shadow-lg transition-transform hover:scale-105 hover:border-[var(--accent-amber)] hover:text-[var(--accent-amber)] active:scale-95 cursor-pointer"
         >
-          Admin · Applications
+          <ClipboardList className="h-5 w-5 shrink-0" />
+          {pendingAppCount > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white shadow-sm">
+              {pendingAppCount > 9 ? '9+' : pendingAppCount}
+            </span>
+          )}
         </button>
       )}
 

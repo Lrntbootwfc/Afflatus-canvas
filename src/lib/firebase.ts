@@ -431,6 +431,78 @@ export async function signInWithGoogle(fallbackEmail?: string, fallbackName?: st
 /**
  * Sign in with Email / Password
  */
+
+/** Never persist credentials on Firestore profile documents. */
+const PROFILE_SENSITIVE_KEY_RE = /password|passwd|pwd|secret|credential/i;
+
+export function omitSensitiveProfileFields<T extends Record<string, any>>(data: T): T {
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data || {})) {
+    if (PROFILE_SENSITIVE_KEY_RE.test(key)) continue;
+    if (key === 'passwordHash' || key === 'password') continue;
+    out[key] = value;
+  }
+  return out as T;
+}
+
+/** Canonical username for uniqueness (lowercase, no leading @). */
+export function normalizeUsername(raw: string): string {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^@+/, '')
+    .replace(/\s+/g, '_');
+}
+
+/**
+ * Ensure username is free in Firestore `users` collection.
+ * Returns normalized username. Throws if taken or invalid.
+ */
+export async function assertUsernameAvailable(
+  rawUsername: string,
+  excludeUid?: string
+): Promise<string> {
+  const clean = normalizeUsername(rawUsername);
+  if (clean.length < 3) {
+    throw new Error('Username must be at least 3 characters.');
+  }
+  if (!/^[a-z0-9._]+$/.test(clean)) {
+    throw new Error('Username can only use letters, numbers, dots, and underscores.');
+  }
+
+  await ensureFirestoreOnline();
+  const usersCol = collection(db, 'users');
+
+  // Primary: exact match on stored username (we always write lowercase)
+  const snap = await getDocs(query(usersCol, where('username', '==', clean)));
+  for (const d of snap.docs) {
+    if (excludeUid && d.id === excludeUid) continue;
+    const err = new Error(
+      `Username "@${clean}" is already taken. Please choose a different username.`
+    );
+    (err as any).code = 'auth/username-already-in-use';
+    throw err;
+  }
+
+  // Legacy docs that may have used usernameLower
+  try {
+    const snapLower = await getDocs(query(usersCol, where('usernameLower', '==', clean)));
+    for (const d of snapLower.docs) {
+      if (excludeUid && d.id === excludeUid) continue;
+      const err = new Error(
+        `Username "@${clean}" is already taken. Please choose a different username.`
+      );
+      (err as any).code = 'auth/username-already-in-use';
+      throw err;
+    }
+  } catch (e: any) {
+    if (e?.code === 'auth/username-already-in-use') throw e;
+    // Missing index or field — ignore; primary username query is the source of truth for new accounts
+  }
+
+  return clean;
+}
+
 /** True if this Firebase user signed in only with email/password (not Google). */
 export function isEmailPasswordOnlyUser(user: FirebaseUser): boolean {
   const providers = user.providerData.map((p) => p.providerId);
@@ -443,12 +515,22 @@ export function isEmailPasswordOnlyUser(user: FirebaseUser): boolean {
  * Google Sign-In users are unchanged (Firebase marks them verified).
  */
 export async function assertEmailVerifiedOrThrow(user: FirebaseUser): Promise<void> {
-  await reload(user);
-  const fresh = auth.currentUser;
-  if (!fresh) throw new Error('Session expired. Please sign in again.');
-  if (!isEmailPasswordOnlyUser(fresh)) return;
-  if (fresh.emailVerified) return;
-  await fbSignOut(auth);
+  // Prefer the user object from sign-in; avoid depending on auth.currentUser
+  // (App listener must not signOut mid-check or this looks like "Session expired").
+  try {
+    await reload(user);
+  } catch {
+    /* reload can fail if already signed out elsewhere — fall back to user fields */
+  }
+  const u = auth.currentUser && auth.currentUser.uid === user.uid ? auth.currentUser : user;
+  if (!isEmailPasswordOnlyUser(u)) return;
+  if (u.emailVerified) return;
+
+  try {
+    await fbSignOut(auth);
+  } catch {
+    /* ignore */
+  }
   const err = new Error(
     'Please verify your email before signing in. Open the link we sent to your inbox (and spam folder), then try again.'
   );
@@ -467,6 +549,11 @@ export async function signInWithEmail(email: string, pass: string): Promise<{ us
   // Production: login must NOT auto-create accounts.
   try {
     const result = await signInWithEmailAndPassword(auth, email, pass);
+    try {
+      await result.user.getIdToken(true);
+    } catch {
+      /* ignore */
+    }
     await assertEmailVerifiedOrThrow(result.user);
     const profile = await syncUserProfileToFirestore(result.user);
     return { user: result.user, profile };
@@ -485,6 +572,11 @@ export async function signInWithEmail(email: string, pass: string): Promise<{ us
  * Sign Up with Email / Password
  */
 export async function signUpWithEmail(email: string, pass: string, name?: string, role?: string, location?: string, username?: string): Promise<{ user: FirebaseUser; profile: CreatorProfile; verificationEmailSent: boolean }> {
+  // Username uniqueness against Firestore before creating Auth user
+  const uniqueUsername = await assertUsernameAvailable(
+    username || (email.split('@')[0] || 'creator')
+  );
+
   const result = await createUserWithEmailAndPassword(auth, email, pass);
 
   // Send Firebase Auth verification email (works on any recipient; no Resend/domain required)
@@ -499,6 +591,13 @@ export async function signUpWithEmail(email: string, pass: string, name?: string
 
   // Profile write while still signed in (required by typical Firestore rules).
   // If rules are misconfigured, still finish signup + verification email; profile can sync on first verified login.
+  // Ensure Auth token is attached to Firestore requests (avoids false permission-denied)
+  try {
+    await result.user.getIdToken(true);
+  } catch {
+    /* ignore */
+  }
+
   let profile: CreatorProfile;
   try {
     profile = await syncUserProfileToFirestore(result.user, {
@@ -506,13 +605,13 @@ export async function signUpWithEmail(email: string, pass: string, name?: string
       email: email,
       primaryRole: role || 'Cinematographer',
       location: location || 'not_specified',
-      username: username || (email.split('@')[0]),
+      username: uniqueUsername,
     });
   } catch (profileErr) {
     console.warn('[Auth] Profile write deferred (will retry on verified login):', profileErr);
     profile = {
       id: result.user.uid,
-      username: email.split('@')[0],
+      username: uniqueUsername,
       email,
       name: name || email.split('@')[0],
       avatarUrl: '',
@@ -565,9 +664,14 @@ export async function syncUserProfileToFirestore(
   const defaultUsername = fbUser.email ? fbUser.email.split('@')[0] : `creator_${Date.now()}`;
 
   // Minimal empty profile — NO demo rates, locations, gear, reels, or seeking roles
+  const safeCustom = customData ? omitSensitiveProfileFields(customData as any) : undefined;
+  const resolvedUsername = normalizeUsername(
+    (safeCustom?.username as string) || defaultUsername
+  );
+
   const emptyProfile: CreatorProfile = {
     id: fbUser.uid,
-    username: customData?.username || defaultUsername,
+    username: resolvedUsername,
     email: fbUser.email || customData?.email || '',
     name: customData?.name || fbUser.displayName || defaultUsername,
     avatarUrl: customData?.avatarUrl || fbUser.photoURL || '',
@@ -598,30 +702,44 @@ export async function syncUserProfileToFirestore(
     if (docSnap.exists()) {
       // Existing profile is source of truth — never re-apply empty/demo defaults over saved fields
       const data = docSnap.data() as CreatorProfile;
+      const dataSafe = omitSensitiveProfileFields(data as any) as CreatorProfile;
       const updated: CreatorProfile = {
         ...emptyProfile,
-        ...data,
-        ...(customData || {}),
+        ...dataSafe,
+        ...(safeCustom || {}),
         id: fbUser.uid,
+        username: normalizeUsername(
+          (safeCustom?.username as string) || dataSafe.username || emptyProfile.username
+        ),
         // Keep auth identity in sync without wiping user-edited fields
-        email: fbUser.email || data.email || emptyProfile.email,
-        name: (customData?.name !== undefined ? customData.name : null) || data.name || fbUser.displayName || emptyProfile.name,
+        email: fbUser.email || dataSafe.email || emptyProfile.email,
+        name: (safeCustom?.name !== undefined ? safeCustom.name : null) || dataSafe.name || fbUser.displayName || emptyProfile.name,
         avatarUrl:
-          (customData?.avatarUrl !== undefined ? customData.avatarUrl : null) ||
-          data.avatarUrl ||
+          (safeCustom?.avatarUrl !== undefined ? safeCustom.avatarUrl : null) ||
+          dataSafe.avatarUrl ||
           fbUser.photoURL ||
           '',
       };
+      const toWrite = omitSensitiveProfileFields({
+        ...updated,
+        usernameLower: normalizeUsername(updated.username),
+        updatedAt: serverTimestamp(),
+      } as any);
       // Only write if caller provided customData (e.g. signup fields); otherwise just return stored profile
-      if (customData && Object.keys(customData).length > 0) {
-        await setDoc(userRef, { ...updated, updatedAt: serverTimestamp() }, { merge: true });
+      if (safeCustom && Object.keys(safeCustom).length > 0) {
+        await setDoc(userRef, toWrite, { merge: true });
       }
-      return updated;
+      return omitSensitiveProfileFields(updated as any) as CreatorProfile;
     }
 
     // New user — create minimal doc and await write
-    await setDoc(userRef, { ...emptyProfile, updatedAt: serverTimestamp() });
-    return emptyProfile;
+    const newDoc = omitSensitiveProfileFields({
+      ...emptyProfile,
+      usernameLower: resolvedUsername,
+      updatedAt: serverTimestamp(),
+    } as any);
+    await setDoc(userRef, newDoc);
+    return omitSensitiveProfileFields(emptyProfile as any) as CreatorProfile;
   } catch (err: any) {
     const msg = String(err?.message || err || '');
     const code = String(err?.code || '');
@@ -668,17 +786,19 @@ export async function updateProfileInFirestore(profile: CreatorProfile): Promise
     throw new Error('Profile id is required to save.');
   }
   await ensureFirestoreOnline();
+  // If username is present, enforce uniqueness (exclude self)
+  let username = profile.username;
+  if (username && String(username).trim()) {
+    username = await assertUsernameAvailable(String(username), profile.id);
+  }
   const userRef = doc(db, 'users', profile.id);
-  // Keep worksCount synchronized with portfolios length (public work count)
-  const portfolioLen = Array.isArray((profile as any).portfolios)
-    ? (profile as any).portfolios.length
-    : 0;
-  const payload = {
+  const payload = omitSensitiveProfileFields({
     ...profile,
     id: profile.id,
-    worksCount: portfolioLen,
+    username: username ? normalizeUsername(username) : profile.username,
+    usernameLower: username ? normalizeUsername(username) : normalizeUsername(profile.username || ''),
     updatedAt: serverTimestamp(),
-  };
+  } as any);
   try {
     await setDoc(userRef, payload, { merge: true });
   } catch (err: any) {
@@ -798,31 +918,50 @@ export async function fetchExploreFeedFromFirestore(params?: {
     return { ...rest, email: u.email || '' } as CreatorProfile;
   };
 
-  let worksOut: WorkShowcase[] = works.map((w) => ({
-    ...w,
-    creator: toPublic(userMap.get(w.creatorId)),
-    collaborators: (w.collaboratorIds || [])
-      .map((id) => toPublic(userMap.get(id)))
-      .filter(Boolean) as CreatorProfile[],
-  }));
+  // Only approved users may appear in Explore (as owners or as people on cards)
+  const isApprovedUser = (id?: string) => {
+    if (!id) return false;
+    const u = userMap.get(id);
+    return !!u && resolveApplicationStatus(u) === 'approved';
+  };
+  const publicIfApproved = (id?: string) => {
+    if (!id || !isApprovedUser(id)) return undefined;
+    return toPublic(userMap.get(id));
+  };
 
-  let projectsOut: Project[] = projects.map((p) => ({
-    ...p,
-    seeker: toPublic(userMap.get((p as any).seekerId)),
-    collaborators: ((p as any).collaboratorIds || [])
-      .map((id: string) => toPublic(userMap.get(id)))
-      .filter(Boolean) as CreatorProfile[],
-  }));
+  let worksOut: WorkShowcase[] = works
+    .filter((w) => isApprovedUser(w.creatorId))
+    .map((w) => ({
+      ...w,
+      creator: publicIfApproved(w.creatorId),
+      collaborators: (w.collaboratorIds || [])
+        .map((id) => publicIfApproved(id))
+        .filter(Boolean) as CreatorProfile[],
+    }));
 
-  let tasksOut: ProjectTask[] = tasks.map((t) => ({
-    ...t,
-    creator: toPublic(userMap.get(t.creatorId)),
-  }));
+  let projectsOut: Project[] = projects
+    .filter((p) => isApprovedUser((p as any).seekerId))
+    .map((p) => ({
+      ...p,
+      seeker: publicIfApproved((p as any).seekerId),
+      collaborators: ((p as any).collaboratorIds || [])
+        .map((id: string) => publicIfApproved(id))
+        .filter(Boolean) as CreatorProfile[],
+    }));
 
-  let clubsOut: CreativeClub[] = clubs.map((c) => ({
-    ...c,
-    leadCreator: toPublic(userMap.get(c.leadCreatorId)),
-  }));
+  let tasksOut: ProjectTask[] = tasks
+    .filter((t) => isApprovedUser(t.creatorId))
+    .map((t) => ({
+      ...t,
+      creator: publicIfApproved(t.creatorId),
+    }));
+
+  let clubsOut: CreativeClub[] = clubs
+    .filter((c) => isApprovedUser(c.leadCreatorId))
+    .map((c) => ({
+      ...c,
+      leadCreator: publicIfApproved(c.leadCreatorId),
+    }));
 
   // Category filter
   if (cat && cat !== 'all') {
@@ -1784,69 +1923,7 @@ export async function deleteAccountAndData(): Promise<void> {
 
   const uid = current.uid;
 
-  // 1. Clean up connections / requests involving this user so admin & peers
-  //    do not retain stale pending requests from a deleted account.
-  try {
-    await ensureFirestoreOnline();
-    const [asSender, asRecipient] = await Promise.all([
-      getDocs(query(collection(db, 'connections'), where('senderId', '==', uid))),
-      getDocs(query(collection(db, 'connections'), where('recipientId', '==', uid))),
-    ]);
-    const seen = new Set<string>();
-    for (const d of [...asSender.docs, ...asRecipient.docs]) {
-      if (seen.has(d.id)) continue;
-      seen.add(d.id);
-      try {
-        await deleteDoc(d.ref);
-      } catch (e) {
-        console.warn('[deleteAccount] connection cleanup failed', d.id, e);
-      }
-    }
-  } catch (err: any) {
-    console.warn('[deleteAccount] connections query failed:', err?.message || err);
-  }
-
-  // 1b. Clean join / application requests owned by this user (admin panel)
-  try {
-    for (const colName of ['applications', 'joinRequests', 'accessRequests']) {
-      try {
-        const snap = await getDocs(query(collection(db, colName), where('userId', '==', uid)));
-        for (const d of snap.docs) {
-          try {
-            await deleteDoc(d.ref);
-          } catch (e) {
-            console.warn(`[deleteAccount] ${colName} cleanup failed`, d.id, e);
-          }
-        }
-      } catch {
-        // collection may not exist / no index — non-fatal
-      }
-    }
-    // Also try document id == uid in applications
-    try {
-      await deleteDoc(doc(db, 'applications', uid));
-    } catch {
-      /* ignore */
-    }
-  } catch (err: any) {
-    console.warn('[deleteAccount] application cleanup:', err?.message || err);
-  }
-
-  // 1c. Best-effort: remove user's posts (authorId == uid)
-  try {
-    const postsSnap = await getDocs(query(collection(db, 'posts'), where('authorId', '==', uid)));
-    for (const d of postsSnap.docs) {
-      try {
-        await deleteDoc(d.ref);
-      } catch (e) {
-        console.warn('[deleteAccount] post cleanup failed', d.id, e);
-      }
-    }
-  } catch (err: any) {
-    console.warn('[deleteAccount] posts query failed:', err?.message || err);
-  }
-
-  // 2. Delete Firestore-owned user document (rules enforce auth.uid == userId)
+  // 1. Delete Firestore-owned user document (rules enforce auth.uid == userId)
   try {
     const userRef = doc(db, 'users', uid);
     await deleteDoc(userRef);
@@ -1855,10 +1932,10 @@ export async function deleteAccountAndData(): Promise<void> {
     console.warn('[Firestore] Profile document delete:', err?.message || err);
   }
 
-  // 3. Delete Firebase Authentication account
+  // 2. Delete Firebase Authentication account
   await fbDeleteUser(current);
 
-  // 4. Clear local session state
+  // 3. Clear local session state
   setCachedGmailAccessToken(null);
   try {
     await fbSignOut(auth);
