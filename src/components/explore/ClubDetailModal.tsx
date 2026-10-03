@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Users, Calendar, Layers, Sparkles, MapPin, MessageSquare, Check } from 'lucide-react';
 import type { CreativeClub, CreatorProfile, Project, ProjectTask } from '../../types';
 import { UserAvatar } from '../UserAvatar';
+import { resolveApiBase } from '../../lib/affilApi';
 
 interface ClubDetailModalProps {
   club: CreativeClub | null;
@@ -26,7 +27,7 @@ export const ClubDetailModal: React.FC<ClubDetailModalProps> = ({
 
   useEffect(() => {
     if (!club) return;
-    fetch(`/api/explore/club/${club.id}/related`)
+    fetch(`${resolveApiBase()}/explore/club/${club.id}/related`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {

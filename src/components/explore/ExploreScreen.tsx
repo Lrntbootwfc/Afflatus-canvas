@@ -693,6 +693,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
                         work={work}
                         onOpenDetail={setSelectedWork}
                         onViewCreator={handleViewCreator}
+                        currentUserId={currentUser?.id}
                       />
                     ))}
                   </div>
@@ -817,6 +818,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
                     work={work}
                     onOpenDetail={setSelectedWork}
                     onViewCreator={handleViewCreator}
+                    currentUserId={currentUser?.id}
                   />
                 ))}
               </div>
@@ -866,7 +868,20 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
 
       {/* Global Posts Feed */}
       {mainTab === 'feed' && (
-        <GlobalPostsFeed currentUser={currentUser} refreshTrigger={feedRefreshTrigger} onOpenMessenger={onOpenMessenger} />
+        <GlobalPostsFeed
+          currentUser={currentUser}
+          refreshTrigger={feedRefreshTrigger}
+          onOpenMessenger={onOpenMessenger}
+          onViewAuthor={(authorId) => {
+            setViewingPublicProfileCreatorId(authorId);
+            setViewingPublicProfileCreator(null);
+            getProfileFromFirestore(authorId)
+              .then((profile) => {
+                if (profile) setViewingPublicProfileCreator(profile as any);
+              })
+              .catch(() => {});
+          }}
+        />
       )}
 
       {/* 5. Detail Modals */}

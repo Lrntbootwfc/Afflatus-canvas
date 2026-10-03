@@ -24,6 +24,7 @@ import {
 } from '../lib/firebase';
 import { POPULAR_LOCATIONS, validateLocation } from '../constants/roles';
 import { MapPin } from 'lucide-react';
+import { resolveApiBase as resolveAuthApiBase } from '../lib/affilApi';
 
 interface AuthScreenProps {
   onLoginSuccess: (profile: CreatorProfile, isNewSignup: boolean) => void;
@@ -31,13 +32,6 @@ interface AuthScreenProps {
 }
 
 
-/** Engine API base — production Render has no Vite /api proxy */
-function resolveAuthApiBase(): string {
-  const raw = (import.meta.env.VITE_MAIN_BACKEND_URL as string | undefined)?.trim();
-  if (!raw) return '/api';
-  const base = raw.replace(/\/$/, '');
-  return base.endsWith('/api') ? base : `${base}/api`;
-}
 
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({

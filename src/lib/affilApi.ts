@@ -6,7 +6,7 @@
  */
 import axios from 'axios';
 
-function resolveApiBase(): string {
+export function resolveApiBase(): string {
   const raw = (import.meta.env.VITE_MAIN_BACKEND_URL as string | undefined)?.trim();
   if (raw) {
     const base = raw.replace(/\/$/, '');

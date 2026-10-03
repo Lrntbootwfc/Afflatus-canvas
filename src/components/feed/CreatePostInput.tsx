@@ -144,7 +144,7 @@ export const CreatePostInput: React.FC<CreatePostInputProps> = ({ currentUser, o
           type="button"
           onClick={handleSubmit}
           disabled={isSubmitting || isCompressing || (!caption.trim() && !imageUrl.trim())}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] text-[var(--text-primary)] disabled:opacity-50 cursor-pointer"
+          className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] disabled:opacity-40 cursor-pointer hover:opacity-90"
         >
           <Send size={14} />
           <span>{isSubmitting ? 'Posting…' : 'Post'}</span>

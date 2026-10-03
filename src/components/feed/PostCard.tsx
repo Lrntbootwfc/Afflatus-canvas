@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heart, Share2, MoreHorizontal } from 'lucide-react';
+import { Heart, Share2, Pencil, Trash2 } from 'lucide-react';
 import { Post } from '../../types';
 import affilApi from '../../lib/affilApi';
 import { getPostShareUrl, getProfileFromFirestore } from '../../lib/firebase';
@@ -13,6 +13,8 @@ interface PostCardProps {
   currentUser?: CreatorProfile | null;
   onOpenMessenger?: (connectionId: string) => void;
   onOpenPost?: (postId: string) => void;
+  /** Click name/avatar → open that user's public profile */
+  onViewAuthor?: (authorId: string) => void;
   /**
    * When false (default), Like/Share actions are disabled but existing
    * reaction counts remain visible (view-only).
@@ -26,12 +28,12 @@ export const PostCard: React.FC<PostCardProps> = ({
   currentUser,
   onOpenMessenger,
   onOpenPost,
+  onViewAuthor,
   onDeleted,
   allowReactions = false,
 }) => {
   const [likes, setLikes] = useState<string[]>(post.likes || []);
   const [isLiking, setIsLiking] = useState(false);
-  const [showMenu, setShowMenu] = useState(false);
   const [isDeleted, setIsDeleted] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editCaption, setEditCaption] = useState(post.caption || '');
@@ -42,23 +44,26 @@ export const PostCard: React.FC<PostCardProps> = ({
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [shareProfile, setShareProfile] = useState<CreatorProfile | null>(currentUser || null);
 
-  const isAuthor = currentUserId === post.authorId;
-  const hasLiked = likes.includes(currentUserId);
+  // Only the post author may edit/delete — never expose controls for others' posts
+  const resolvedUserId = String(currentUserId || currentUser?.id || '').trim();
+  const resolvedAuthorId = String(post.authorId || '').trim();
+  const isAuthor = Boolean(resolvedUserId && resolvedAuthorId && resolvedUserId === resolvedAuthorId);
+  const hasLiked = resolvedUserId ? likes.includes(resolvedUserId) : false;
 
   if (isDeleted) return null;
 
   const handleLike = async () => {
     // Req: view reaction counts only — do not create likes
     if (!allowReactions) return;
-    if (isLiking || !currentUserId) return;
+    if (isLiking || !resolvedUserId) return;
     setIsLiking(true);
-    if (hasLiked) setLikes(likes.filter((id) => id !== currentUserId));
-    else setLikes([...likes, currentUserId]);
+    if (hasLiked) setLikes(likes.filter((id) => id !== resolvedUserId));
+    else setLikes([...likes, resolvedUserId]);
     try {
-      await affilApi.toggleLike(post.id, currentUserId);
+      await affilApi.toggleLike(post.id, resolvedUserId);
     } catch {
-      if (hasLiked) setLikes([...likes, currentUserId]);
-      else setLikes(likes.filter((id) => id !== currentUserId));
+      if (hasLiked) setLikes([...likes, resolvedUserId]);
+      else setLikes(likes.filter((id) => id !== resolvedUserId));
     } finally {
       setIsLiking(false);
     }
@@ -94,13 +99,13 @@ export const PostCard: React.FC<PostCardProps> = ({
   const handleShareToAfflatus = async () => {
     if (!allowReactions) return;
     setShareMenuOpen(false);
-    if (!currentUserId) {
+    if (!resolvedUserId) {
       alert('Sign in to share to Afflatus');
       return;
     }
     let profile = shareProfile || currentUser || null;
     if (!profile) {
-      profile = await getProfileFromFirestore(currentUserId);
+      profile = await getProfileFromFirestore(resolvedUserId);
       setShareProfile(profile);
     }
     if (!profile) {
@@ -111,6 +116,8 @@ export const PostCard: React.FC<PostCardProps> = ({
   };
 
   const handleDelete = async () => {
+    // Hard gate: never delete another user's post from this UI
+    if (!isAuthor || !resolvedUserId) return;
     if (!window.confirm('Are you sure you want to delete this post?')) return;
     try {
       await affilApi.deletePost(post.id);
@@ -122,10 +129,11 @@ export const PostCard: React.FC<PostCardProps> = ({
   };
 
   const handleSaveEdit = async () => {
-    if (!currentUserId || !isAuthor) return;
+    // Hard gate: never edit another user's post from this UI
+    if (!resolvedUserId || !isAuthor) return;
     setIsSavingEdit(true);
     try {
-      await affilApi.updatePost(post.id, { userId: currentUserId, caption: editCaption });
+      await affilApi.updatePost(post.id, { userId: resolvedUserId, caption: editCaption });
       setDisplayCaption(editCaption);
       setIsEditing(false);
     } catch {
@@ -135,17 +143,15 @@ export const PostCard: React.FC<PostCardProps> = ({
     }
   };
 
+  // Caption only — do not surface author role on the card
   const title =
-    (displayCaption || '').trim().split('\n')[0]?.slice(0, 72) ||
-    post.authorRole ||
-    'Untitled work';
-  const category = post.authorRole || 'Post';
+    (displayCaption || '').trim().split('\n')[0]?.slice(0, 72) || 'Post';
 
   return (
-    <article className="group flex flex-col overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-sm transition-all duration-300 hover:border-[color-mix(in_srgb,var(--accent-amber)_35%,transparent)] hover:shadow-md">
-      {/* Media — dominant, shorter aspect */}
+    <article className="group relative z-0 flex flex-col overflow-visible rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-sm transition-all duration-300 hover:z-10 hover:border-[color-mix(in_srgb,var(--accent-amber)_35%,transparent)] hover:shadow-md">
+      {/* Media — role badge removed */}
       <div
-        className="relative aspect-[4/3] w-full cursor-pointer overflow-hidden bg-[var(--card-inner-bg)]"
+        className="relative aspect-[4/3] w-full cursor-pointer overflow-hidden rounded-t-xl bg-[var(--card-inner-bg)]"
         onClick={() => setLightboxOpen(true)}
       >
         {post.imageUrl ? (
@@ -165,58 +171,10 @@ export const PostCard: React.FC<PostCardProps> = ({
             <p className="line-clamp-3 text-xs text-[var(--text-secondary)]">{displayCaption || 'Shared on Afflatus'}</p>
           </div>
         )}
-        <span className="absolute left-2 top-2 rounded-full border border-white/10 bg-black/45 px-2 py-0.5 text-[9px] font-mono font-semibold uppercase tracking-wide text-white/90 backdrop-blur-sm">
-          {category}
-        </span>
       </div>
 
-      {/* Compact metadata strip */}
+      {/* Compact strip: caption + avatar/name + like/share + author edit/delete icons */}
       <div className="flex flex-col gap-1.5 px-2.5 py-2 sm:px-3 sm:py-2.5">
-        <div className="flex items-start justify-between gap-1">
-          <h3
-            className="line-clamp-2 flex-1 cursor-pointer text-[12px] font-semibold leading-snug text-[var(--text-primary)] sm:text-[13px]"
-            onClick={() => setLightboxOpen(true)}
-          >
-            {title}
-          </h3>
-          {isAuthor && (
-            <div className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => setShowMenu((v) => !v)}
-                className="rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                aria-label="Post options"
-              >
-                <MoreHorizontal size={14} />
-              </button>
-              {showMenu && (
-                <div className="absolute right-0 top-full z-20 mt-1 w-28 overflow-hidden rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] shadow-lg">
-                  <button
-                    type="button"
-                    className="w-full px-2.5 py-1.5 text-left text-[11px] text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)]"
-                    onClick={() => {
-                      setShowMenu(false);
-                      setIsEditing(true);
-                    }}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full px-2.5 py-1.5 text-left text-[11px] text-red-500 hover:bg-[var(--card-inner-bg)]"
-                    onClick={() => {
-                      setShowMenu(false);
-                      handleDelete();
-                    }}
-                  >
-                    Delete
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
         {isEditing ? (
           <div className="space-y-1.5">
             <textarea
@@ -230,7 +188,7 @@ export const PostCard: React.FC<PostCardProps> = ({
                 type="button"
                 disabled={isSavingEdit}
                 onClick={handleSaveEdit}
-                className="rounded-md bg-[var(--accent-amber)] px-2 py-1 text-[10px] font-bold text-[#181614]"
+                className="rounded-md bg-[var(--accent-amber)] px-2 py-1 text-[10px] font-bold text-[var(--btn-on-accent,#14100C)]"
               >
                 Save
               </button>
@@ -247,56 +205,115 @@ export const PostCard: React.FC<PostCardProps> = ({
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <div className="h-5 w-5 shrink-0 overflow-hidden rounded-full border border-[var(--card-border)] bg-[var(--card-inner-bg)]">
-                {post.authorAvatar ? (
-                  <img src={post.authorAvatar} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-[8px] font-bold text-[var(--text-muted)]">
-                    {(post.authorName || '?').charAt(0).toUpperCase()}
-                  </div>
-                )}
-              </div>
-              <span className="truncate text-[10px] text-[var(--text-muted)]">{post.authorName}</span>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
+          <>
+            {displayCaption ? (
+              <p
+                className="line-clamp-2 cursor-pointer text-[12px] font-semibold leading-snug text-[var(--text-primary)] sm:text-[13px]"
+                onClick={() => setLightboxOpen(true)}
+              >
+                {title}
+              </p>
+            ) : null}
+            <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
-                onClick={handleLike}
-                disabled={isLiking}
-                className={`flex items-center gap-0.5 text-[11px] ${
-                  hasLiked ? 'text-[var(--accent-amber)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-                }`}
+                className="flex min-w-0 items-center gap-1.5 text-left cursor-pointer hover:opacity-90"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (post.authorId && onViewAuthor) onViewAuthor(post.authorId);
+                }}
+                aria-label={`View ${post.authorName || 'creator'} profile`}
               >
-                <Heart size={13} className={hasLiked ? 'fill-current' : ''} />
-                <span className="font-mono">{likes.length}</span>
+                <div className="h-6 w-6 shrink-0 overflow-hidden rounded-full border border-[var(--card-border)] bg-[var(--card-inner-bg)]">
+                  {post.authorAvatar ? (
+                    <img src={post.authorAvatar} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[9px] font-bold text-[var(--text-muted)]">
+                      {(post.authorName || '?').charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <span className="truncate text-[11px] font-medium text-[var(--text-primary)] hover:underline">
+                  {post.authorName || 'Creator'}
+                </span>
               </button>
-              <div className="relative">
+              <div className="relative flex shrink-0 items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => { if (!allowReactions) return; setShareMenuOpen((v) => !v); }}
-                  className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                  aria-label="Share"
+                  onClick={handleLike}
+                  disabled={isLiking || !allowReactions}
+                  className={`flex items-center gap-0.5 rounded p-0.5 text-[11px] ${
+                    hasLiked
+                      ? 'text-[var(--accent-amber)]'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                  } disabled:opacity-50`}
+                  aria-label="Like"
                 >
-                  <Share2 size={13} />
+                  <Heart size={14} className={hasLiked ? 'fill-current' : ''} />
+                  <span className="font-mono">{likes.length}</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!allowReactions) return;
+                    setShareMenuOpen((v) => !v);
+                  }}
+                  className="rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                  aria-label="Share"
+                  disabled={!allowReactions}
+                >
+                  <Share2 size={14} />
+                </button>
+                {isAuthor && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditing(true)}
+                      className="rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      aria-label="Edit post"
+                      title="Edit"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDelete}
+                      className="rounded p-0.5 text-[var(--text-muted)] hover:text-red-500"
+                      aria-label="Delete post"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                )}
                 {shareMenuOpen && (
-                  <div className="absolute bottom-full right-0 z-20 mb-1 w-40 overflow-hidden rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] shadow-xl">
-                    <button type="button" onClick={handleShareToAfflatus} className="w-full px-2.5 py-1.5 text-left text-[11px] text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)]">
+                  <div className="absolute bottom-full right-0 z-[60] mb-1 w-40 overflow-hidden rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] shadow-xl">
+                    <button
+                      type="button"
+                      onClick={handleShareToAfflatus}
+                      className="w-full px-2.5 py-1.5 text-left text-[11px] text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)]"
+                    >
                       Share to Afflatus
                     </button>
-                    <button type="button" onClick={handleCopyLink} className="w-full px-2.5 py-1.5 text-left text-[11px] text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)]">
+                    <button
+                      type="button"
+                      onClick={handleCopyLink}
+                      className="w-full px-2.5 py-1.5 text-left text-[11px] text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)]"
+                    >
                       Copy link
                     </button>
-                    <button type="button" onClick={handleExternalShare} className="w-full px-2.5 py-1.5 text-left text-[11px] text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)]">
+                    <button
+                      type="button"
+                      onClick={handleExternalShare}
+                      className="w-full px-2.5 py-1.5 text-left text-[11px] text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)]"
+                    >
                       Share externally
                     </button>
                   </div>
                 )}
               </div>
             </div>
-          </div>
+          </>
         )}
       </div>
 
@@ -338,7 +355,6 @@ export const PostCard: React.FC<PostCardProps> = ({
                 </div>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-[var(--text-primary)]">{post.authorName}</p>
-                  <p className="truncate text-[11px] text-[var(--text-muted)]">{post.authorRole}</p>
                 </div>
               </div>
 
@@ -355,7 +371,7 @@ export const PostCard: React.FC<PostCardProps> = ({
                       type="button"
                       disabled={isSavingEdit}
                       onClick={handleSaveEdit}
-                      className="rounded-lg bg-[var(--accent-amber)] px-3 py-1.5 text-xs font-bold text-[#181614]"
+                      className="rounded-lg bg-[var(--accent-amber)] px-3 py-1.5 text-xs font-bold text-[var(--btn-on-accent,#14100C)]"
                     >
                       Save
                     </button>
@@ -380,30 +396,57 @@ export const PostCard: React.FC<PostCardProps> = ({
               )}
             </div>
 
-            {/* Actions */}
+            {/* Actions: like, share, author edit/delete icons — no role */}
             <div className="flex shrink-0 items-center justify-between border-t border-[var(--card-border)] px-4 py-3 sm:px-5">
               <button
                 type="button"
                 onClick={handleLike}
-                disabled={isLiking}
+                disabled={isLiking || !allowReactions}
                 className={`flex items-center gap-1.5 text-sm ${
                   hasLiked ? 'text-[var(--accent-amber)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-                }`}
+                } disabled:opacity-50`}
+                aria-label="Like"
               >
                 <Heart size={18} className={hasLiked ? 'fill-current' : ''} />
                 <span className="font-mono">{likes.length}</span>
               </button>
-              <div className="relative">
+              <div className="relative flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => { if (!allowReactions) return; setShareMenuOpen((v) => !v); }}
-                  className="flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  onClick={() => {
+                    if (!allowReactions) return;
+                    setShareMenuOpen((v) => !v);
+                  }}
+                  className="flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                  disabled={!allowReactions}
+                  aria-label="Share"
                 >
                   <Share2 size={18} />
-                  <span>Share</span>
                 </button>
+                {isAuthor && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditing(true)}
+                      className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      aria-label="Edit post"
+                      title="Edit"
+                    >
+                      <Pencil size={18} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDelete}
+                      className="text-[var(--text-muted)] hover:text-red-500"
+                      aria-label="Delete post"
+                      title="Delete"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </>
+                )}
                 {shareMenuOpen && (
-                  <div className="absolute bottom-full right-0 z-20 mb-2 w-44 overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-xl">
+                  <div className="absolute bottom-full right-0 z-[60] mb-2 w-44 overflow-hidden rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-xl">
                     <button type="button" onClick={handleShareToAfflatus} className="w-full px-3 py-2.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)]">
                       Share to Afflatus
                     </button>

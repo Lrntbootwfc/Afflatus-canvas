@@ -42,6 +42,7 @@ import type {
   ExploreCreatorItem,
   ExploreFeedResponse,
 } from '../types/explore';
+import { computeProfileCompletion } from './profileCompletion';
 
 /** Connection request stored in Firestore */
 export interface SharedPostRef {
@@ -918,11 +919,17 @@ export async function fetchExploreFeedFromFirestore(params?: {
     return { ...rest, email: u.email || '' } as CreatorProfile;
   };
 
-  // Only approved users may appear in Explore (as owners or as people on cards)
+  // Only approved, non-deleted users may appear in Explore (as owners or on cards)
+  const isLiveApprovedUser = (u?: CreatorProfile | null) => {
+    if (!u || !String(u.id || '').trim()) return false;
+    if ((u as any).deleted === true || (u as any).accountDeleted === true) return false;
+    // Missing / removed accounts leave no usable identity in Explore
+    if (!String(u.name || '').trim() && !String(u.primaryRole || '').trim()) return false;
+    return resolveApplicationStatus(u) === 'approved';
+  };
   const isApprovedUser = (id?: string) => {
     if (!id) return false;
-    const u = userMap.get(id);
-    return !!u && resolveApplicationStatus(u) === 'approved';
+    return isLiveApprovedUser(userMap.get(id));
   };
   const publicIfApproved = (id?: string) => {
     if (!id || !isApprovedUser(id)) return undefined;
@@ -1021,18 +1028,45 @@ export async function fetchExploreFeedFromFirestore(params?: {
     );
   }
 
-  // Creators: only APPROVED users appear in Explore. Exclude current user.
+  // Creators: only APPROVED, non-deleted users. Exclude viewer.
+  const viewer = params?.userId ? userMap.get(params.userId) : undefined;
+  const viewerSeeking = [
+    ...((viewer?.seekingRoles as string[]) || []),
+  ]
+    .map((r) => String(r || '').toLowerCase().trim())
+    .filter(Boolean);
+
+  const roleTokens = (u: CreatorProfile) =>
+    [u.primaryRole || '', ...((u.secondaryRoles as string[]) || [])]
+      .map((r) => String(r || '').toLowerCase().trim())
+      .filter(Boolean);
+
+  const matchesSeeking = (candidate: CreatorProfile): boolean => {
+    if (!viewerSeeking.length) return false;
+    const offered = roleTokens(candidate);
+    return viewerSeeking.some((w) => offered.some((o) => o.includes(w) || w.includes(o)));
+  };
+
   let creatorsOut: ExploreCreatorItem[] = users
-    .filter((u) => u.id !== params?.userId)
-    .filter((u) => resolveApplicationStatus(u) === 'approved')
+    .filter((u) => String(u.id || '').trim() && u.id !== params?.userId)
+    .filter((u) => isLiveApprovedUser(u))
     .map((u) => {
       const publicU = toPublic(u)!;
+      const completionPct = computeProfileCompletion(u).percent; // 0–100
+      const seekingMatch = matchesSeeking(u) ? 1 : 0;
+      // Primary: existing seeking/relevance group; secondary: profile completeness
+      // (match group always ranks above non-match; completeness orders within group)
+      const relevanceScore = seekingMatch * 1000 + completionPct;
       return {
         ...publicU,
-        discoveryReason: publicU.primaryRole
-          ? `Active ${publicU.primaryRole}${publicU.location ? ` · ${publicU.location}` : ''}`
-          : 'Creator on Afflatus',
-        relevanceScore: publicU.profileCompleted ? 0.7 : 0.4,
+        discoveryReason: seekingMatch
+          ? `Matches who you're seeking · ${publicU.primaryRole || 'Creator'}${
+              publicU.location ? ` · ${publicU.location}` : ''
+            }`
+          : publicU.primaryRole
+            ? `Active ${publicU.primaryRole}${publicU.location ? ` · ${publicU.location}` : ''}`
+            : 'Creator on Afflatus',
+        relevanceScore,
       };
     });
 
@@ -1054,6 +1088,9 @@ export async function fetchExploreFeedFromFirestore(params?: {
         c.bio?.toLowerCase().includes(q)
     );
   }
+
+  // Stable order for pagination/scroll: seeking match first, then completeness desc
+  creatorsOut.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
 
   return {
     success: true,
@@ -1087,6 +1124,7 @@ export async function createConnectionRequest(params: {
   kind?: 'connection' | 'message_request' | 'post_share';
   sharedPost?: SharedPostRef;
 }): Promise<{ connection: ConnectionRequest; alreadyExists: boolean }> {
+  await ensureFirestoreOnline();
   const current = auth.currentUser;
   if (!current) {
     throw new Error('You must be signed in as the sender to create a connection request.');
@@ -1140,23 +1178,85 @@ export async function createConnectionRequest(params: {
     console.warn('[createConnectionRequest] existence check:', err?.message || err);
     pairSnap = null;
   }
+  // Re-open declined pairs so sender can request again after denial
+  const reopenIfDeclined = async (
+    existing: ConnectionRequest,
+    ref: ReturnType<typeof doc>
+  ): Promise<{ connection: ConnectionRequest; alreadyExists: boolean } | null> => {
+    if (String(existing.status) !== 'declined') return null;
+    const payload: Record<string, unknown> = {
+      status: 'pending',
+      message: params.message || existing.message || '',
+      senderId,
+      recipientId: params.recipientId,
+      updatedAt: serverTimestamp(),
+    };
+    if (params.projectId) payload.projectId = params.projectId;
+    if (params.taskId) payload.taskId = params.taskId;
+    if (params.kind) payload.kind = params.kind;
+    if (params.sharedPost) payload.sharedPost = params.sharedPost;
+    await setDoc(ref, payload, { merge: true });
+    try {
+      await createNotification({
+        userId: params.recipientId,
+        type: 'connection_request',
+        title: 'New connection request',
+        body: (params.message || '').slice(0, 120) || 'Someone wants to connect with you.',
+        relatedId: existing.id,
+        fromUserId: senderId,
+      });
+    } catch {
+      /* non-blocking */
+    }
+    return {
+      connection: { ...existing, status: 'pending', message: String(payload.message) } as ConnectionRequest,
+      alreadyExists: false,
+    };
+  };
+
   if (pairSnap?.exists()) {
     const existing = { id: pairSnap.id, ...pairSnap.data() } as ConnectionRequest;
+    const reopened = await reopenIfDeclined(existing, pairRef);
+    if (reopened) return reopened;
     return { connection: existing, alreadyExists: true };
   }
 
-  // Also scan legacy random ids for same pair (either direction)
-  const [asSender, asRecipient] = await Promise.all([
-    getDocs(query(collection(db, 'connections'), where('senderId', '==', senderId))),
-    getDocs(query(collection(db, 'connections'), where('recipientId', '==', senderId))),
-  ]);
-  const legacy = [...asSender.docs, ...asRecipient.docs]
-    .map((d) => ({ id: d.id, ...d.data() } as ConnectionRequest))
-    .find((c) => {
-      const other = c.senderId === senderId ? c.recipientId : c.senderId;
-      return other === params.recipientId;
-    });
+  // Legacy random-id scan: sequential + limited + isolated try/catch.
+  // Parallel getDocs on `connections` collides with active onSnapshot targets
+  // → FIRESTORE INTERNAL ASSERTION (targetId / unexpected state).
+  let legacy: ConnectionRequest | undefined;
+  try {
+    const asSender = await getDocs(
+      query(collection(db, 'connections'), where('senderId', '==', senderId), limit(40))
+    );
+    legacy = asSender.docs
+      .map((d) => ({ id: d.id, ...d.data() } as ConnectionRequest))
+      .find((c) => c.recipientId === params.recipientId);
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    if (!/internal assertion|unexpected state|target id/i.test(msg)) {
+      console.warn('[createConnectionRequest] legacy sender scan:', msg.slice(0, 120));
+    }
+  }
+  if (!legacy) {
+    try {
+      const asRecipient = await getDocs(
+        query(collection(db, 'connections'), where('recipientId', '==', senderId), limit(40))
+      );
+      legacy = asRecipient.docs
+        .map((d) => ({ id: d.id, ...d.data() } as ConnectionRequest))
+        .find((c) => c.senderId === params.recipientId);
+    } catch (err: any) {
+      const msg = String(err?.message || err || '');
+      if (!/internal assertion|unexpected state|target id/i.test(msg)) {
+        console.warn('[createConnectionRequest] legacy recipient scan:', msg.slice(0, 120));
+      }
+    }
+  }
   if (legacy) {
+    const legacyRef = doc(db, 'connections', legacy.id);
+    const reopened = await reopenIfDeclined(legacy, legacyRef);
+    if (reopened) return reopened;
     return { connection: legacy, alreadyExists: true };
   }
 
@@ -1231,11 +1331,33 @@ export async function createConnectionRequest(params: {
  */
 export async function getConnectionsForUser(userId: string): Promise<ConnectionRequest[]> {
   const runQuery = async (): Promise<ConnectionRequest[]> => {
-    const asSender = await getDocs(query(collection(db, 'connections'), where('senderId', '==', userId)));
-    const asRecipient = await getDocs(query(collection(db, 'connections'), where('recipientId', '==', userId)));
+    // Sequential queries — parallel getDocs races active connection listeners
     const byId = new Map<string, ConnectionRequest>();
-    for (const d of [...asSender.docs, ...asRecipient.docs]) {
-      byId.set(d.id, { id: d.id, ...d.data() } as ConnectionRequest);
+    try {
+      const asSender = await getDocs(
+        query(collection(db, 'connections'), where('senderId', '==', userId), limit(80))
+      );
+      for (const d of asSender.docs) {
+        byId.set(d.id, { id: d.id, ...d.data() } as ConnectionRequest);
+      }
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      if (!/internal assertion|unexpected state|target id/i.test(msg)) {
+        console.warn('[getConnectionsForUser] sender query:', msg.slice(0, 120));
+      }
+    }
+    try {
+      const asRecipient = await getDocs(
+        query(collection(db, 'connections'), where('recipientId', '==', userId), limit(80))
+      );
+      for (const d of asRecipient.docs) {
+        byId.set(d.id, { id: d.id, ...d.data() } as ConnectionRequest);
+      }
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      if (!/internal assertion|unexpected state|target id/i.test(msg)) {
+        console.warn('[getConnectionsForUser] recipient query:', msg.slice(0, 120));
+      }
     }
     // Deduplicate 1:1 pairs (legacy random ids + dm_* ids for same people)
     const statusRank: Record<string, number> = {
@@ -1273,7 +1395,7 @@ export async function getConnectionsForUser(userId: string): Promise<ConnectionR
     } catch (err: any) {
       const msg = String(err?.message || '');
       // Internal SDK conflict — never surface to UI
-      if (msg.toLowerCase().includes('target id already exists') && attempt < 2) {
+      if (/target id|internal assertion|unexpected state/i.test(msg) && attempt < 2) {
         console.warn(`[Firestore] getConnectionsForUser: query target conflict, retry ${attempt + 1}/3`);
         await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
         continue;
@@ -1476,10 +1598,49 @@ export async function saveProjectToFirestore(project: Project & { seekerId: stri
 export async function getUserWorksFromFirestore(creatorId: string): Promise<WorkShowcase[]> {
   if (!creatorId) return [];
   try {
-    const snap = await getDocs(query(collection(db, 'works'), where('creatorId', '==', creatorId)));
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as WorkShowcase));
+    const byId = new Map<string, WorkShowcase>();
+    const owned = await getDocs(query(collection(db, 'works'), where('creatorId', '==', creatorId)));
+    for (const d of owned.docs) {
+      byId.set(d.id, { id: d.id, ...d.data() } as WorkShowcase);
+    }
+    // Collaborator showcases where user is listed
+    try {
+      const collab = await getDocs(
+        query(collection(db, 'works'), where('collaboratorIds', 'array-contains', creatorId))
+      );
+      for (const d of collab.docs) {
+        if (!byId.has(d.id)) byId.set(d.id, { id: d.id, ...d.data() } as WorkShowcase);
+      }
+    } catch {
+      /* index optional */
+    }
+    return Array.from(byId.values());
   } catch (e) {
     console.warn('[Firestore] getUserWorksFromFirestore failed', e);
+    return [];
+  }
+}
+
+/** Posts by author — client path when Main Backend API is unavailable (e.g. missing VITE_MAIN_BACKEND_URL). */
+export async function getUserPostsFromFirestore(authorId: string): Promise<import('../types').Post[]> {
+  if (!authorId) return [];
+  try {
+    await ensureFirestoreOnline();
+    let docs: { id: string; data: () => any }[] = [];
+    try {
+      const snap = await getDocs(
+        query(collection(db, 'posts'), where('authorId', '==', authorId), orderBy('createdAt', 'desc'))
+      );
+      docs = snap.docs;
+    } catch {
+      const snap = await getDocs(query(collection(db, 'posts'), where('authorId', '==', authorId)));
+      docs = snap.docs;
+    }
+    const posts = docs.map((d) => ({ id: d.id, ...d.data() })) as import('../types').Post[];
+    posts.sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    return posts;
+  } catch (e) {
+    console.warn('[Firestore] getUserPostsFromFirestore failed', e);
     return [];
   }
 }

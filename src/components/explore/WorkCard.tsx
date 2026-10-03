@@ -1,15 +1,138 @@
-import React from 'react';
-import { Play, Layers, ArrowUpRight, Heart, Sparkles, Film } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Play, Layers, ArrowUpRight, Heart, Film, Share2, Pencil, Trash2 } from 'lucide-react';
 import type { WorkShowcase, CreatorProfile } from '../../types';
 import { UserAvatar } from '../UserAvatar';
+import {
+  getPortfolioItemLikeState,
+  togglePortfolioItemLike,
+  saveWorkToFirestore,
+  deleteWorkFromFirestore,
+} from '../../lib/firebase';
 
 interface WorkCardProps {
   work: WorkShowcase;
   onOpenDetail: (work: WorkShowcase) => void;
   onViewCreator?: (creator: CreatorProfile) => void;
+  /** Signed-in viewer — enables existing portfolioLikes toggle for public works */
+  currentUserId?: string | null;
+  /** Owner-only edit (uses existing saveWork flow via parent) */
+  onEditWork?: (work: WorkShowcase) => void;
 }
 
-export const WorkCard: React.FC<WorkCardProps> = ({ work, onOpenDetail, onViewCreator }) => {
+export const WorkCard: React.FC<WorkCardProps> = ({
+  work,
+  onOpenDetail,
+  onViewCreator,
+  currentUserId,
+  onEditWork,
+}) => {
+  const viewerId = String(currentUserId || '').trim();
+  const ownerId = String(work.creatorId || work.creator?.id || '').trim();
+  const isOwner = Boolean(viewerId && ownerId && viewerId === ownerId);
+  const [likeCount, setLikeCount] = useState<number>(
+    typeof work.appreciationCount === 'number' ? work.appreciationCount : 0
+  );
+  const [liked, setLiked] = useState(false);
+  const [liking, setLiking] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const state = await getPortfolioItemLikeState(work.id);
+      if (cancelled || !state) return;
+      setLikeCount(state.likedBy.length);
+      if (viewerId) setLiked(state.likedBy.includes(viewerId));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [work.id, viewerId]);
+
+  const handleLike = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!viewerId || liking) return;
+    const creatorId = String(work.creatorId || work.creator?.id || '').trim();
+    if (!creatorId) return;
+    setLiking(true);
+    const prevLiked = liked;
+    const prevCount = likeCount;
+    setLiked(!prevLiked);
+    setLikeCount(Math.max(0, prevCount + (prevLiked ? -1 : 1)));
+    try {
+      const result = await togglePortfolioItemLike({
+        itemId: work.id,
+        creatorId,
+        userId: viewerId,
+      });
+      setLiked(result.liked);
+      setLikeCount(result.likedBy.length);
+    } catch {
+      setLiked(prevLiked);
+      setLikeCount(prevCount);
+    } finally {
+      setLiking(false);
+    }
+  };
+
+
+  const handleShare = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const url = work.linkUrl || (typeof window !== 'undefined' ? `${window.location.origin}/?work=${work.id}` : '');
+    try {
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        await navigator.share({
+          title: work.title || 'Afflatus work',
+          text: work.description || work.title || 'Check this work on Afflatus',
+          url: url || undefined,
+        });
+      } else if (url) {
+        await navigator.clipboard.writeText(url);
+        alert('Link copied');
+      }
+    } catch {
+      /* cancelled */
+    }
+  };
+
+
+  const handleEdit = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isOwner) return;
+    if (onEditWork) {
+      onEditWork(work);
+      return;
+    }
+    const nextTitle = window.prompt('Edit work title', work.title || '');
+    if (nextTitle == null) return;
+    const nextDesc = window.prompt('Edit work description', work.description || '');
+    if (nextDesc == null) return;
+    try {
+      await saveWorkToFirestore({
+        ...work,
+        title: nextTitle.trim() || work.title,
+        description: nextDesc.trim(),
+      });
+      alert('Work updated.');
+    } catch (err: any) {
+      alert(err?.message || 'Could not update work.');
+    }
+  };
+
+
+  const handleDeleteWork = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isOwner || !ownerId) return;
+    if (!window.confirm('Delete this work showcase? This cannot be undone.')) return;
+    try {
+      await deleteWorkFromFirestore(work.id, ownerId);
+      alert('Work deleted.');
+      // Soft-hide; parent list refresh is ideal but not always available
+      (e.currentTarget as HTMLElement).closest('article')?.remove();
+    } catch (err: any) {
+      alert(err?.message || 'Could not delete work.');
+    }
+  };
+
   return (
     <article
       id={`work-card-${work.id}`}
@@ -116,11 +239,57 @@ export const WorkCard: React.FC<WorkCardProps> = ({ work, onOpenDetail, onViewCr
         </div>
       </div>
 
-      {/* Editorial Footer */}
-      <div className="px-4 sm:px-5 py-3 border-t border-[var(--card-border)]/60 flex items-center justify-between bg-[var(--card-inner-bg)]/40">
-        <div className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-          <Heart className="w-3.5 h-3.5 text-[var(--accent-amber)] fill-current" />
-          <span className="font-mono text-[11px] font-medium">{work.appreciationCount} appreciations</span>
+      {/* Footer: expand (card click / view), like, share, edit (owner only) */}
+      <div className="px-4 sm:px-5 py-3 border-t border-[var(--card-border)]/60 flex items-center justify-between bg-[var(--card-inner-bg)]/40 gap-2">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleLike}
+            disabled={!viewerId || liking}
+            title={viewerId ? (liked ? 'Unlike' : 'Like this work') : 'Sign in to like'}
+            className={`flex items-center gap-1.5 text-xs transition-colors cursor-pointer disabled:cursor-default ${
+              liked
+                ? 'text-[var(--accent-amber)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--accent-amber)]'
+            }`}
+            aria-label={liked ? 'Unlike work' : 'Like work'}
+          >
+            <Heart className={`w-3.5 h-3.5 ${liked ? 'fill-current' : ''}`} />
+            <span className="font-mono text-[11px] font-medium">
+              {likeCount}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={handleShare}
+            className="p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+            aria-label="Share work"
+            title="Share"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+          </button>
+          {isOwner && (
+            <>
+              <button
+                type="button"
+                onClick={handleEdit}
+                className="p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                aria-label="Edit work"
+                title="Edit"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteWork}
+                className="p-0.5 text-[var(--text-muted)] hover:text-red-500 cursor-pointer"
+                aria-label="Delete work"
+                title="Delete"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
         </div>
 
         <button
@@ -131,7 +300,7 @@ export const WorkCard: React.FC<WorkCardProps> = ({ work, onOpenDetail, onViewCr
           }}
           className="text-xs font-semibold text-[var(--accent-amber)] group-hover:translate-x-0.5 transition-transform flex items-center gap-1 cursor-pointer"
         >
-          <span>View Case Study</span>
+          <span>Open</span>
           <ArrowUpRight className="w-3.5 h-3.5" />
         </button>
       </div>

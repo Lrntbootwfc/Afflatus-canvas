@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Briefcase, MapPin, Calendar, Sparkles, Users, MessageSquare, ShieldCheck } from 'lucide-react';
 import type { Project, CreatorProfile, ProjectTask, CreativeClub } from '../../types';
 import { UserAvatar } from '../UserAvatar';
+import { resolveApiBase } from '../../lib/affilApi';
 
 interface ProjectDetailModalProps {
   project: Project | null;
@@ -29,7 +30,7 @@ export const ProjectDetailModal: React.FC<ProjectDetailModalProps> = ({
 
   useEffect(() => {
     if (!project) return;
-    fetch(`/api/explore/project/${project.id}/related`)
+    fetch(`${resolveApiBase()}/explore/project/${project.id}/related`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {

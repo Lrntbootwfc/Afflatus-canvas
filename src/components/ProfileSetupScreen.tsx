@@ -55,12 +55,15 @@ interface ProfileSetupScreenProps {
   initialProfile: CreatorProfile;
   onProfileSaved: (updatedProfile: CreatorProfile) => void;
   onCancel?: () => void;
+  /** Open public profile exactly as others see it (no need to hunt via Explore) */
+  onPreviewPublicProfile?: () => void;
 }
 
 export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
   initialProfile,
   onProfileSaved,
   onCancel,
+  onPreviewPublicProfile,
 }) => {
   // Form State
   const [username, setUsername] = useState(initialProfile.username || '');
@@ -388,6 +391,15 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
           <p className="text-xs sm:text-sm text-[var(--text-secondary)]">
             Set up your primary role, base location, work reels, social links, and collaborator roles to personalize your feed.
           </p>
+          {onPreviewPublicProfile && (
+            <button
+              type="button"
+              onClick={onPreviewPublicProfile}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[var(--card-border)] bg-[var(--card-inner-bg)] px-3.5 py-1.5 text-xs font-semibold text-[var(--text-primary)] hover:border-[var(--accent-amber)] hover:text-[var(--accent-amber)] transition-colors cursor-pointer"
+            >
+              Preview public profile
+            </button>
+          )}
         </div>
         <div className="shrink-0 self-center sm:self-start">
           <ProfileCompletionRing percent={liveCompletion.percent} size={96} strokeWidth={9} label="" />

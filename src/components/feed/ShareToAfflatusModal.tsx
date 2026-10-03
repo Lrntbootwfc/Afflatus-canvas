@@ -7,6 +7,7 @@ import {
   createConnectionRequest,
   getPostShareUrl,
   auth,
+  sanitizeUserFacingError,
 } from '../../lib/firebase';
 import { affilApi } from '../../lib/affilApi';
 import { UserAvatar } from '../UserAvatar';
@@ -104,7 +105,7 @@ export const ShareToAfflatusModal: React.FC<ShareToAfflatusModalProps> = ({
         setSentTo(`message request to ${recipient.name || 'user'}`);
       }
     } catch (err: any) {
-      setError(err?.message || 'Could not share post. Complete your profile if required, then try again.');
+      setError(sanitizeUserFacingError(err, 'Could not share post. Complete your profile if required, then try again.'));
     } finally {
       setSendingId(null);
     }

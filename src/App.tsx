@@ -492,6 +492,15 @@ export default function App() {
                 setCurrentScreen('landing');
               }
             }}
+            onPreviewPublicProfile={() => {
+              setExploreNavParams({
+                tab: 'creators',
+                category: undefined,
+                search: '',
+                entity: { type: 'creator', id: currentUser.id },
+              });
+              setCurrentScreen('explore');
+            }}
           />
         )}
 

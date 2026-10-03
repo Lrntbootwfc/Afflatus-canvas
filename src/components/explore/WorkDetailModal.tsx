@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, ExternalLink, Play, Heart, Users, Sparkles, Layers, Briefcase } from 'lucide-react';
 import type { WorkShowcase, CreatorProfile, Project, ProjectTask, CreativeClub } from '../../types';
 import { UserAvatar } from '../UserAvatar';
+import { resolveApiBase } from '../../lib/affilApi';
 
 interface WorkDetailModalProps {
   work: WorkShowcase | null;
@@ -28,7 +29,7 @@ export const WorkDetailModal: React.FC<WorkDetailModalProps> = ({
   useEffect(() => {
     if (!work) return;
     setLoadingRelated(true);
-    fetch(`/api/explore/work/${work.id}/related`)
+    fetch(`${resolveApiBase()}/explore/work/${work.id}/related`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {

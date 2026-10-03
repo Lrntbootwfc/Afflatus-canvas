@@ -17,8 +17,19 @@ import type {
   CallSheet,
 } from '../types';
 
+/** Use same engine base as affilApi (VITE_MAIN_BACKEND_URL in prod). */
+function resolveLegacyApiBase(): string {
+  const raw = (import.meta.env.VITE_MAIN_BACKEND_URL as string | undefined)?.trim();
+  if (raw) {
+    const base = raw.replace(/\/$/, '');
+    const apiRoot = base.endsWith('/api') ? base : `${base}/api`;
+    return `${apiRoot}/v1`;
+  }
+  return '/api/v1';
+}
+
 const client = axios.create({
-  baseURL: '/api/v1',
+  baseURL: resolveLegacyApiBase(),
   headers: {
     'Content-Type': 'application/json',
   },

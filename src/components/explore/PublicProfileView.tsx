@@ -36,6 +36,7 @@ import {
   getProfileFromFirestore,
   fetchExploreFeedFromFirestore,
   getUserWorksFromFirestore,
+  getUserPostsFromFirestore,
   createConnectionRequest,
   getConnectionsForUser,
   submitCollaborationFeedback,
@@ -151,12 +152,32 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
 
         try {
           if (isMounted) setPostsLoading(true);
-          const userPostsData = await affilApi.getUserPosts(creatorId);
-          const list = Array.isArray(userPostsData?.posts)
-            ? userPostsData.posts
-            : Array.isArray(userPostsData)
-              ? userPostsData
-              : [];
+          let list: any[] = [];
+          try {
+            const userPostsData = await affilApi.getUserPosts(creatorId);
+            list = Array.isArray(userPostsData?.posts)
+              ? userPostsData.posts
+              : Array.isArray(userPostsData)
+                ? userPostsData
+                : [];
+          } catch (apiErr) {
+            console.warn('API getUserPosts failed, falling back to Firestore:', apiErr);
+          }
+          // Always merge Firestore so posts appear even when backend URL/API fails
+          try {
+            const fsPosts = await getUserPostsFromFirestore(creatorId);
+            if (fsPosts.length) {
+              const byId = new Map<string, any>();
+              for (const p of [...list, ...fsPosts]) {
+                if (p?.id) byId.set(p.id, p);
+              }
+              list = Array.from(byId.values()).sort((a, b) =>
+                String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+              );
+            }
+          } catch (fsErr) {
+            console.warn('Firestore getUserPosts fallback failed:', fsErr);
+          }
           if (isMounted) {
             setUserPosts(list);
             setCreator((prev) =>
@@ -282,9 +303,13 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
         setShowConnectModal(false);
       }, 2000);
     } catch (err: any) {
+      const raw = String(err?.message || err || '');
+      const friendly = /internal assertion|unexpected state|target id|FIRESTORE/i.test(raw)
+        ? 'Could not send proposal due to a temporary connection issue. Please wait a moment and try again.'
+        : raw || 'Network error submitting proposal.';
       setConnectFeedback({
         type: 'error',
-        message: err?.message || 'Network error submitting proposal.',
+        message: friendly,
       });
     } finally {
       setIsSubmittingConnect(false);
@@ -331,6 +356,14 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
 
   const allProjects = [...leadProjects, ...participatedProjects];
 
+  // Collaboration CTA labels from real connection status (survives refresh)
+  const collabPhase: 'start' | 'requested' | 'collaborating' =
+    !connectionStatus || connectionStatus === 'declined'
+      ? 'start'
+      : connectionStatus === 'pending'
+        ? 'requested'
+        : 'collaborating'; // accepted | collaborating | completed
+
   return (
     <div id={`public-profile-view-${creatorId}`} className="min-h-screen pb-20 bg-[var(--bg-primary)]">
       {/* Sticky Navigation Header */}
@@ -354,21 +387,22 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 <span>Checking...</span>
               </button>
-            ) : (!connectionStatus || connectionStatus === 'declined') ? (
+            ) : collabPhase === 'start' ? (
               <button
                 id={`header-connect-btn-${creator.id}`}
                 onClick={handleInitiateConnect}
                 className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--btn-on-accent,#14100C)] shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>Connect / Collaborate</span>
-              </button>
-            ) : connectionStatus === 'accepted' ? (
-              <button
-                onClick={handleStartCollaboration}
-                className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--btn-on-accent,#14100C)] shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all"
-              >
                 <span>Start Collaboration</span>
+              </button>
+            ) : collabPhase === 'requested' ? (
+              <button
+                disabled
+                className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] text-[var(--text-primary)] inline-flex items-center gap-1.5 opacity-80 cursor-default"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
+                <span>Collaboration Requested</span>
               </button>
             ) : (
               <button
@@ -376,7 +410,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                 className="px-4 py-2 rounded-full text-xs font-bold bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] text-[var(--text-primary)] inline-flex items-center gap-1.5 opacity-80 cursor-default"
               >
                 <CheckCircle2 className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
-                <span className="capitalize">{connectionStatus}</span>
+                <span>Collaborating</span>
               </button>
             )
           )}
@@ -489,22 +523,22 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                         <Loader2 className="w-4 h-4 animate-spin" />
                         <span>Checking status...</span>
                       </button>
-                    ) : (!connectionStatus || connectionStatus === 'declined') ? (
+                    ) : collabPhase === 'start' ? (
                       <button
                         id={`connect-profile-btn-${creator.id}`}
                         onClick={handleInitiateConnect}
                         className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--btn-on-accent,#14100C)] shadow-lg inline-flex items-center justify-center gap-2 cursor-pointer transition-all"
                       >
                         <Send className="w-4 h-4" />
-                        <span>Connect / Collaborate</span>
-                      </button>
-                    ) : connectionStatus === 'accepted' ? (
-                      <button
-                        onClick={handleStartCollaboration}
-                        className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--accent-amber)] hover:opacity-90 text-[var(--btn-on-accent,#14100C)] shadow-lg inline-flex items-center justify-center gap-2 cursor-pointer transition-all"
-                      >
-                        <Sparkles className="w-4 h-4" />
                         <span>Start Collaboration</span>
+                      </button>
+                    ) : collabPhase === 'requested' ? (
+                      <button
+                        disabled
+                        className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] text-[var(--text-primary)] inline-flex items-center justify-center gap-2 cursor-default opacity-80"
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-[var(--accent-amber)]" />
+                        <span>Collaboration Requested</span>
                       </button>
                     ) : (
                       <button
@@ -512,7 +546,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                         className="w-full sm:w-auto px-6 py-3 rounded-full text-sm font-bold bg-[var(--card-inner-bg)] border border-[var(--card-inner-border)] text-[var(--text-primary)] inline-flex items-center justify-center gap-2 cursor-default opacity-80"
                       >
                         <CheckCircle2 className="w-4 h-4 text-[var(--accent-amber)]" />
-                        <span className="capitalize">{connectionStatus}</span>
+                        <span>Collaborating</span>
                       </button>
                     )}
                     {canLeaveFeedback && (
@@ -667,6 +701,12 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                           key={work.id}
                           work={work}
                           onOpenDetail={() => onViewWorkDetail(work)}
+                          currentUserId={currentUser?.id}
+                          onEditWork={
+                            currentUser?.id && work.creatorId === currentUser.id
+                              ? () => onViewWorkDetail(work)
+                              : undefined
+                          }
                         />
                       ))}
                     </div>
@@ -687,16 +727,30 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
               </div>
 
               {currentUser && currentUser.id === creator.id && (
-                <CreatePostInput currentUser={currentUser} onPostCreated={() => {
+                <CreatePostInput currentUser={currentUser} onPostCreated={async () => {
                   setPostsLoading(true);
-                  affilApi
-                    .getUserPosts(creator.id)
-                    .then((res) => {
-                      const list = Array.isArray(res?.posts) ? res.posts : Array.isArray(res) ? res : [];
-                      setUserPosts(list);
-                    })
-                    .catch(() => setUserPosts([]))
-                    .finally(() => setPostsLoading(false));
+                  try {
+                    let list: any[] = [];
+                    try {
+                      const res = await affilApi.getUserPosts(creator.id);
+                      list = Array.isArray(res?.posts) ? res.posts : Array.isArray(res) ? res : [];
+                    } catch { /* API optional */ }
+                    const fsPosts = await getUserPostsFromFirestore(creator.id);
+                    if (fsPosts.length) {
+                      const byId = new Map<string, any>();
+                      for (const p of [...list, ...fsPosts]) {
+                        if (p?.id) byId.set(p.id, p);
+                      }
+                      list = Array.from(byId.values()).sort((a, b) =>
+                        String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+                      );
+                    }
+                    setUserPosts(list);
+                  } catch {
+                    setUserPosts([]);
+                  } finally {
+                    setPostsLoading(false);
+                  }
                 }} />
               )}
 
@@ -721,7 +775,12 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
                       currentUserId={currentUser?.id || ''}
                       currentUser={currentUser}
                       onDeleted={() => setUserPosts((prev) => prev.filter((x) => x.id !== post.id))}
-                      allowReactions={false}
+                      allowReactions={Boolean(currentUser?.id && currentUser?.profileCompleted)}
+                      onViewAuthor={(authorId) => {
+                        if (authorId && authorId !== creatorId) {
+                          /* stay on profile when same author; parent Explore handles cross-nav */
+                        }
+                      }}
                     />
                   ))}
                 </div>

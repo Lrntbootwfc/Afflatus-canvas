@@ -7,6 +7,7 @@ interface GlobalPostsFeedProps {
   currentUser: CreatorProfile | null;
   onOpenMessenger?: (connectionId: string) => void;
   onOpenPost?: (postId: string) => void;
+  onViewAuthor?: (authorId: string) => void;
   refreshTrigger?: number;
 }
 
@@ -15,6 +16,7 @@ export const GlobalPostsFeed: React.FC<GlobalPostsFeedProps> = ({
   refreshTrigger = 0,
   onOpenMessenger,
   onOpenPost,
+  onViewAuthor,
 }) => {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,8 +68,9 @@ export const GlobalPostsFeed: React.FC<GlobalPostsFeedProps> = ({
               currentUser={currentUser}
               onOpenMessenger={onOpenMessenger}
               onOpenPost={onOpenPost}
+              onViewAuthor={onViewAuthor}
               onDeleted={fetchPosts}
-              allowReactions={false}
+              allowReactions={Boolean(currentUser?.id && currentUser?.profileCompleted)}
             />
           ))}
         </div>

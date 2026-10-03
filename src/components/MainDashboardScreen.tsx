@@ -26,10 +26,11 @@ import {
   saveAiMatchConversation,
   renameAiMatchConversation,
   deleteAiMatchConversation,
+  sanitizeUserFacingError,
   type ConnectionRequest,
   type AiMatchConversationMeta,
 } from '../lib/firebase';
-import { affilApi } from '../lib/affilApi';
+import { affilApi, resolveApiBase } from '../lib/affilApi';
 
 interface MainDashboardScreenProps {
   currentUser: CreatorProfile;
@@ -258,7 +259,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
         showToast(`Proposal sent successfully to ${creator.name}!`);
       }
     } catch (err: any) {
-      showToast(err?.message || 'Error sending proposal.');
+      showToast(sanitizeUserFacingError(err, 'Could not send proposal. Please try again.'));
     }
   };
 
@@ -284,15 +285,8 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
       }));
 
       const profileLoc = (currentUser.location || (currentUser as any).city || '').trim();
-      
-      const rawBase = (import.meta.env.VITE_MAIN_BACKEND_URL as string | undefined)?.trim();
-      const apiBase = rawBase
-        ? (rawBase.replace(/\/$/, '').endsWith('/api')
-            ? rawBase.replace(/\/$/, '')
-            : `${rawBase.replace(/\/$/, '')}/api`)
-        : '/api';
-      
-      const res = await fetch(`${apiBase}/recommendations/ai-match`, {
+
+      const res = await fetch(`${resolveApiBase()}/recommendations/ai-match`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

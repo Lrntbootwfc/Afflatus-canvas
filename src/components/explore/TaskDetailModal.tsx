@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Briefcase, MapPin, Clock, MessageSquare, Sparkles, Users, ArrowRight } from 'lucide-react';
 import type { ProjectTask, CreatorProfile, Project } from '../../types';
 import { UserAvatar } from '../UserAvatar';
+import { resolveApiBase } from '../../lib/affilApi';
 
 interface TaskDetailModalProps {
   task: ProjectTask | null;
@@ -25,7 +26,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
   useEffect(() => {
     if (!task) return;
-    fetch(`/api/explore/task/${task.id}/related`)
+    fetch(`${resolveApiBase()}/explore/task/${task.id}/related`)
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
