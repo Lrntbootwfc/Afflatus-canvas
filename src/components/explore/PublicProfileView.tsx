@@ -98,6 +98,14 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
   );
   const [isConnectionLoading, setIsConnectionLoading] = useState<boolean>(true);
 
+  // When parent seeds profile after mount (Explore async load / own preview), adopt it
+  useEffect(() => {
+    if (initialCreator && String((initialCreator as any).id || '') === String(creatorId)) {
+      setCreator((prev) => prev || initialCreator);
+      setError(null);
+    }
+  }, [initialCreator, creatorId]);
+
 
   useEffect(() => {
     let isMounted = true;
@@ -105,15 +113,24 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
       setLoading(true);
       setError(null);
       try {
+        // Resolve profile: Firestore → initialCreator → currentUser (own profile)
         const profile = await getProfileFromFirestore(creatorId);
-        if (!profile) {
-          if (initialCreator && isMounted) {
-            setCreator(initialCreator);
-          } else if (isMounted) {
-            throw new Error('Profile not found.');
-          }
+        const selfFallback =
+          currentUser &&
+          (String(currentUser.id) === String(creatorId) ||
+            String((currentUser as any).uid || '') === String(creatorId))
+            ? currentUser
+            : null;
+        const resolved =
+          profile ||
+          (initialCreator && String((initialCreator as any).id || '') === String(creatorId)
+            ? initialCreator
+            : null) ||
+          selfFallback;
+        if (!resolved) {
+          if (isMounted) throw new Error('Profile not found.');
         } else if (isMounted) {
-          setCreator(profile);
+          setCreator({ ...resolved, id: String(resolved.id || creatorId) } as CreatorProfile);
         }
 
         const [feed, worksDirect] = await Promise.all([
@@ -253,7 +270,7 @@ export const PublicProfileView: React.FC<PublicProfileViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [creatorId, currentUser?.id]);
+  }, [creatorId, currentUser?.id, initialCreator?.id]);
 
   const isViewingSelf = currentUser?.id === creatorId;
 

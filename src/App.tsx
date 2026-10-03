@@ -493,11 +493,13 @@ export default function App() {
               }
             }}
             onPreviewPublicProfile={() => {
+              const id = String(currentUser.id || '').trim();
+              if (!id) return;
               setExploreNavParams({
                 tab: 'creators',
                 category: undefined,
                 search: '',
-                entity: { type: 'creator', id: currentUser.id },
+                entity: { type: 'creator', id },
               });
               setCurrentScreen('explore');
             }}

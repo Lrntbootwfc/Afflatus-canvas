@@ -759,11 +759,39 @@ export async function syncUserProfileToFirestore(
  * Fetch profile from Firestore by user ID with offline fallback
  */
 export async function getProfileFromFirestore(userId: string): Promise<CreatorProfile | null> {
+  const id = String(userId || '').trim();
+  if (!id) return null;
   try {
-    const userRef = doc(db, 'users', userId);
-    const snap = await getDocOnline(userRef);
-    if (snap.exists()) {
-      return { id: userId, ...(snap.data() as CreatorProfile) };
+    const userRef = doc(db, 'users', id);
+    // Prefer server, then cache — production static hosts often race getDocFromServer
+    let snap: Awaited<ReturnType<typeof getDoc>> | null = null;
+    try {
+      snap = await getDocOnline(userRef);
+    } catch (err: any) {
+      console.warn('[Firestore] getDocOnline profile failed, trying cache:', err?.message || err);
+      try {
+        snap = await getDoc(userRef);
+      } catch (err2: any) {
+        console.warn('[Firestore] getDoc profile failed:', err2?.message || err2);
+        snap = null;
+      }
+    }
+    if (snap?.exists()) {
+      const data = snap.data() as CreatorProfile;
+      return { ...data, id: data.id || id };
+    }
+    // Self: auth session may have profile fields even if doc briefly unavailable
+    const current = auth.currentUser;
+    if (current && current.uid === id) {
+      try {
+        const again = await getDoc(userRef);
+        if (again.exists()) {
+          const data = again.data() as CreatorProfile;
+          return { ...data, id: data.id || id };
+        }
+      } catch {
+        /* fall through */
+      }
     }
     return null;
   } catch (err: any) {

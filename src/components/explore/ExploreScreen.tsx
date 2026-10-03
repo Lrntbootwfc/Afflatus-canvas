@@ -182,12 +182,17 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
     if (initialSearch !== undefined) setSearchQuery(initialSearch);
   }, [initialTab, initialCategory, initialSearch]);
 
-  // Open FULL public profile (works/posts/bio) when navigated from AI Match — not CreatorDetailModal
+  // Open FULL public profile when navigated from Profile Setup preview / AI Match / deep link
   useEffect(() => {
     if (!initialEntity || initialEntity.type !== 'creator' || !initialEntity.id) return;
     let cancelled = false;
-    setViewingPublicProfileCreatorId(initialEntity.id);
-    getProfileFromFirestore(initialEntity.id)
+    const id = String(initialEntity.id).trim();
+    setViewingPublicProfileCreatorId(id);
+    // Seed immediately for own profile so UI does not flash "not found"
+    if (currentUser && String(currentUser.id) === id) {
+      setViewingPublicProfileCreator(currentUser as any);
+    }
+    getProfileFromFirestore(id)
       .then((profile) => {
         if (!cancelled && profile) {
           setViewingPublicProfileCreator(profile as any);
@@ -197,7 +202,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [initialEntity?.type, initialEntity?.id]);
+  }, [initialEntity?.type, initialEntity?.id, currentUser?.id]);
 
   useEffect(() => {
     if (initialEntity && feedData) {
@@ -873,9 +878,15 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
           refreshTrigger={feedRefreshTrigger}
           onOpenMessenger={onOpenMessenger}
           onViewAuthor={(authorId) => {
-            setViewingPublicProfileCreatorId(authorId);
-            setViewingPublicProfileCreator(null);
-            getProfileFromFirestore(authorId)
+            const id = String(authorId || '').trim();
+            if (!id) return;
+            setViewingPublicProfileCreatorId(id);
+            // Prefer known feed/post author data while Firestore loads
+            const fromFeed =
+              feedData?.suggestedCreators?.find((c) => c.id === id) ||
+              (currentUser && String(currentUser.id) === id ? currentUser : null);
+            setViewingPublicProfileCreator((fromFeed as any) || null);
+            getProfileFromFirestore(id)
               .then((profile) => {
                 if (profile) setViewingPublicProfileCreator(profile as any);
               })
