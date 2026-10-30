@@ -42,15 +42,13 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   onOpenMessenger,
   onNavigateToProfile,
 }) => {
-  const { mode, toggleTheme, palette, availablePalettes } = useTheme();
+  const { mode, toggleTheme } = useTheme();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [messageUnreadCount, setMessageUnreadCount] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
-
-  const activePaletteObj = availablePalettes.find((p) => p.id === palette);
 
   // Close dropdown / notifications on click outside
   useEffect(() => {
@@ -212,39 +210,6 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               </div>
             )}
 
-            {/* Themes Button (Studio) */}
-            <button
-              id="header-themes-btn"
-              onClick={onOpenThemes}
-              className="px-3 py-1.5 rounded-full bg-[var(--nav-item-bg)] hover:bg-[var(--nav-item-hover)] text-[var(--nav-text)] border border-[var(--nav-border)] transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95 text-xs font-semibold"
-              title="Open Themes & Palettes"
-              aria-label="Open themes"
-            >
-              <Palette className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
-              <span className="hidden sm:inline">Themes</span>
-            </button>
-
-            {/* Light / Dark Mode Toggle (Preserves current palette) */}
-            <button
-              id="header-mode-toggle"
-              onClick={toggleTheme}
-              className="p-2 sm:px-3 sm:py-1.5 rounded-full bg-[var(--nav-item-bg)] hover:bg-[var(--nav-item-hover)] text-[var(--nav-text)] border border-[var(--nav-border)] transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
-              title={`Switch to ${mode === 'dark' ? 'Light' : 'Dark'} mode (Palette: ${activePaletteObj?.name})`}
-              aria-label="Toggle light or dark mode"
-            >
-              {mode === 'dark' ? (
-                <>
-                  <Sun className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
-                  <span className="text-[11px] font-medium text-[var(--nav-text)] hidden lg:inline">Light</span>
-                </>
-              ) : (
-                <>
-                  <Moon className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
-                  <span className="text-[11px] font-medium text-[var(--nav-text)] hidden lg:inline">Dark</span>
-                </>
-              )}
-            </button>
-
             {/* Profile Dropdown or Login / Signup CTA */}
             {currentUser ? (
               <div className="relative" ref={dropdownRef}>
@@ -322,6 +287,24 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                     >
                       <Palette className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
                       <span>Themes Studio</span>
+                    </button>
+
+                    <button
+                      id="dropdown-mode-toggle"
+                      onClick={() => {
+                        setIsDropdownOpen(false);
+                        toggleTheme();
+                      }}
+                      className="w-full flex items-center justify-between gap-2.5 px-3 py-2 rounded-xl text-xs text-[var(--text-primary)] hover:bg-[var(--card-inner-bg)] transition-colors text-left cursor-pointer"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        {mode === 'dark' ? (
+                          <Sun className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
+                        ) : (
+                          <Moon className="w-3.5 h-3.5 text-[var(--accent-amber)]" />
+                        )}
+                        <span>{mode === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+                      </span>
                     </button>
 
                     <button

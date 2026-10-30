@@ -1,15 +1,26 @@
+// Run with: node --env-file=.env update_firestore_profiles.mjs
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, updateDoc, doc } from 'firebase/firestore';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAHmRtTcFIZzXEsYSHKpL4jNckRGcb5fbU",
-  authDomain: "creates-b8e17.firebaseapp.com",
-  projectId: "creates-b8e17",
-  storageBucket: "creates-b8e17.firebasestorage.app",
-  messagingSenderId: "625685398470",
-  appId: "1:625685398470:web:580860e8eee59b1aaa68c7"
+  apiKey: process.env.VITE_FIREBASE_API_KEY,
+  authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.VITE_FIREBASE_APP_ID,
 };
+
+const MIGRATION_EMAIL = process.env.MIGRATION_ADMIN_EMAIL;
+const MIGRATION_PASSWORD = process.env.MIGRATION_ADMIN_PASSWORD;
+
+if (!MIGRATION_EMAIL || !MIGRATION_PASSWORD) {
+  console.error(
+    'Set MIGRATION_ADMIN_EMAIL and MIGRATION_ADMIN_PASSWORD (an existing Firebase Auth admin account) before running this script.'
+  );
+  process.exit(1);
+}
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -18,16 +29,12 @@ const auth = getAuth(app);
 async function updateProfiles() {
   console.log('Authenticating...');
   try {
-    await signInWithEmailAndPassword(auth, 'test_admin_migration@example.com', 'password123');
+    await signInWithEmailAndPassword(auth, MIGRATION_EMAIL, MIGRATION_PASSWORD);
   } catch (err) {
-    try {
-      await createUserWithEmailAndPassword(auth, 'test_admin_migration@example.com', 'password123');
-    } catch (createErr) {
-      console.error('Failed to authenticate:', createErr);
-      process.exit(1);
-    }
+    console.error('Failed to authenticate:', err);
+    process.exit(1);
   }
-  
+
   console.log('Fetching users from Firestore...');
   const usersRef = collection(db, 'users');
   const snapshot = await getDocs(usersRef);

@@ -47,6 +47,7 @@ import {
 import { GlobalPostsFeed } from '../feed/GlobalPostsFeed';
 import affilApi from '../../lib/affilApi';
 import { CreatePostInput } from '../feed/CreatePostInput';
+import { ExploreProjectListings } from './ExploreProjectListings';
 
 interface ExploreScreenProps {
   currentUser: CreatorProfile | null;
@@ -88,7 +89,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
   initialEntity,
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'creators');
-  const [mainTab, setMainTab] = useState<'explore' | 'feed'>('explore');
+  const [mainTab, setMainTab] = useState<'explore' | 'feed' | 'projects'>('explore');
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory || 'all');
   const [searchQuery, setSearchQuery] = useState<string>(initialSearch || '');
   const [feedData, setFeedData] = useState<ExploreFeedResponse | null>(null);
@@ -98,6 +99,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
   // Post creation modal
   const [feedRefreshTrigger, setFeedRefreshTrigger] = useState(0);
   const [isCreatePostModalOpen, setIsCreatePostModalOpen] = useState(false);
+  const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
 
   // Selected modals
   const [selectedWork, setSelectedWork] = useState<WorkShowcase | null>(null);
@@ -174,6 +176,11 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
   useEffect(() => {
     fetchFeed();
   }, [selectedCategory, currentUser?.id]);
+
+  // Reset scroll position when switching between Explore's main tabs / sub-tabs
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [mainTab, activeTab]);
 
   // Synchronize initial navigation from C1 Assistant or external routes
   useEffect(() => {
@@ -436,80 +443,27 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
 
   return (
     <div className="w-full min-h-screen py-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-10 animate-in fade-in duration-200">
-      {/* 1. Editorial Header Banner with Discovery Radar */}
-      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-6 border-b border-[var(--card-border)]">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[var(--accent-amber)] animate-pulse" />
-            <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-[var(--accent-amber)]">
-              Production Registry &amp; Creative Discovery
-            </span>
+      {/* Profile Status Banner for Incomplete users */}
+      {currentUser && !isProfileComplete && (
+        <div className="p-3.5 rounded-2xl bg-[var(--card-inner-bg)] border border-[var(--accent-amber)]/30 flex items-center gap-3">
+          <ShieldCheck className="w-5 h-5 text-[var(--accent-amber)] shrink-0" />
+          <div>
+            <p className="text-xs font-bold text-[var(--text-primary)]">Explorer Mode Active</p>
+            <p className="text-[11px] text-[var(--text-secondary)]">
+              Browse freely. Complete profile anytime to submit proposals.
+            </p>
           </div>
-
-          <h1 className="font-editorial text-3xl sm:text-4xl lg:text-5xl font-bold text-[var(--text-primary)] tracking-tight">
-            Explore Work &amp; Craft
-          </h1>
-
-          <p className="text-xs sm:text-sm text-[var(--text-secondary)] max-w-2xl leading-relaxed">
-            Discover active film campaigns, production briefs, open crew opportunities, creative
-            guilds, and verified talent across Indian cinema and digital media.
-          </p>
+          <button
+            onClick={onNavigateToOnboarding}
+            className="amber-pill-btn px-3 py-1.5 rounded-full text-[11px] font-bold shrink-0 cursor-pointer ml-auto"
+          >
+            Complete
+          </button>
         </div>
-
-        {/* User Stats Counter Bar */}
-        {currentUser && (
-          <div className="flex items-center gap-2 p-2 rounded-2xl bg-[var(--card-inner-bg)]/80 border border-[var(--card-border)] text-xs shrink-0 flex-wrap">
-            <div className="px-3 py-1.5 rounded-xl bg-[var(--card-bg)] border border-[var(--card-border)] flex items-center gap-2">
-              <span className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">My Collaborations</span>
-              <span className="font-mono font-bold text-sm text-[var(--accent-amber)]">{currentUser.collaborationCount || 0}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Profile Status Banner for Incomplete users */}
-        {currentUser && !isProfileComplete && (
-          <div className="p-3.5 rounded-2xl bg-[var(--card-inner-bg)] border border-[var(--accent-amber)]/30 flex items-center gap-3 shrink-0">
-            <ShieldCheck className="w-5 h-5 text-[var(--accent-amber)] shrink-0" />
-            <div>
-              <p className="text-xs font-bold text-[var(--text-primary)]">Explorer Mode Active</p>
-              <p className="text-[11px] text-[var(--text-secondary)]">
-                Browse freely. Complete profile anytime to submit proposals.
-              </p>
-            </div>
-            <button
-              onClick={onNavigateToOnboarding}
-              className="amber-pill-btn px-3 py-1.5 rounded-full text-[11px] font-bold shrink-0 cursor-pointer"
-            >
-              Complete
-            </button>
-          </div>
-        )}
-
-        {/* Progressive collaboration questions — optional, never blocks Explore */}
-        {currentUser && isProfileComplete && collabQAvailable && (
-          <div className="p-3.5 rounded-2xl bg-[var(--card-inner-bg)] border border-[var(--accent-amber)]/30 flex items-center gap-3 shrink-0">
-            <Sparkles className="w-5 h-5 text-[var(--accent-amber)] shrink-0" />
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold text-[var(--text-primary)]">New collaboration questions</p>
-              <p className="text-[11px] text-[var(--text-secondary)]">
-                New questions are available 
-        
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onOpenCollaborationQuestions?.()}
-              className="amber-pill-btn px-3 py-1.5 rounded-full text-[11px] font-bold shrink-0 cursor-pointer"
-            >
-              Answer
-            </button>
-          </div>
-        )}
-
-      </div>
+      )}
 
       {/* 2. Main Navigation Tabs */}
-      <div className="flex items-center justify-between border-b border-[var(--card-border)] pb-4 mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--card-border)] pb-4 mb-6">
         <div className="flex items-center space-x-2">
           <button
             onClick={() => setMainTab('explore')}
@@ -529,23 +483,65 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
                 : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-transparent'
             }`}
           >
+            Explore Posts
+          </button>
+          <button
+            onClick={() => setMainTab('projects')}
+            className={`px-4 py-2 text-sm font-bold rounded-full transition-colors ${
+              mainTab === 'projects'
+                ? 'bg-[var(--nav-item-active-bg)] text-[var(--nav-item-active-text)]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-transparent'
+            }`}
+          >
             Explore Projects
           </button>
         </div>
 
-        {mainTab === 'feed' && currentUser && (
-          <button
-            type="button"
-            onClick={() => {
-              handleGatedAction('Create a post', () => setIsCreatePostModalOpen(true));
-            }}
-            className="amber-pill-btn inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold shadow-sm cursor-pointer shrink-0"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Create Post
-          </button>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {currentUser && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--card-inner-bg)] border border-[var(--card-border)] text-xs shrink-0">
+              <span className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Collabs</span>
+              <span className="font-mono font-bold text-sm text-[var(--accent-amber)]">{currentUser.collaborationCount || 0}</span>
+            </div>
+          )}
 
+          {currentUser && isProfileComplete && collabQAvailable && (
+            <button
+              type="button"
+              onClick={() => onOpenCollaborationQuestions?.()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--accent-amber)]/10 border border-[var(--accent-amber)]/30 text-[var(--accent-amber)] text-xs font-bold shrink-0 hover:bg-[var(--accent-amber)]/20 transition-colors cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              New Questions
+            </button>
+          )}
+
+          {mainTab === 'feed' && currentUser && (
+            <button
+              type="button"
+              onClick={() => {
+                handleGatedAction('Create a post', () => setIsCreatePostModalOpen(true));
+              }}
+              className="amber-pill-btn inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold shadow-sm cursor-pointer shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Create Post
+            </button>
+          )}
+
+          {mainTab === 'projects' && currentUser && (
+            <button
+              type="button"
+              onClick={() => {
+                handleGatedAction('Post a project', () => setIsCreateProjectModalOpen(true));
+              }}
+              className="amber-pill-btn inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold shadow-sm cursor-pointer shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Post Project
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 3. Search Toolbar (only for 'explore' tab) */}
@@ -882,6 +878,29 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             if (!id) return;
             setViewingPublicProfileCreatorId(id);
             // Prefer known feed/post author data while Firestore loads
+            const fromFeed =
+              feedData?.suggestedCreators?.find((c) => c.id === id) ||
+              (currentUser && String(currentUser.id) === id ? currentUser : null);
+            setViewingPublicProfileCreator((fromFeed as any) || null);
+            getProfileFromFirestore(id)
+              .then((profile) => {
+                if (profile) setViewingPublicProfileCreator(profile as any);
+              })
+              .catch(() => {});
+          }}
+        />
+      )}
+
+      {/* Project Listings — role-filtered "need people for a project" posts */}
+      {mainTab === 'projects' && (
+        <ExploreProjectListings
+          currentUser={currentUser}
+          isCreateModalOpen={isCreateProjectModalOpen}
+          onCloseCreateModal={() => setIsCreateProjectModalOpen(false)}
+          onViewAuthor={(authorId) => {
+            const id = String(authorId || '').trim();
+            if (!id) return;
+            setViewingPublicProfileCreatorId(id);
             const fromFeed =
               feedData?.suggestedCreators?.find((c) => c.id === id) ||
               (currentUser && String(currentUser.id) === id ? currentUser : null);

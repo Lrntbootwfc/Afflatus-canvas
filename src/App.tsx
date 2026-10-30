@@ -3,21 +3,24 @@
  * Clean, modern SaaS application with full Light/Dark mode and multi-page wireframe flows
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import type { CreatorProfile } from './types';
 import { HeaderNav } from './components/HeaderNav';
 import { LandingPage } from './components/LandingPage';
-import { AuthScreen } from './components/AuthScreen';
-import { ProfileSetupScreen } from './components/ProfileSetupScreen';
-import { MainDashboardScreen } from './components/MainDashboardScreen';
-import { ExploreScreen } from './components/explore/ExploreScreen';
-import { CollaborationQuestionsPage } from './components/collaboration/CollaborationQuestionsPage';
 import { C1AssistantDrawer } from './components/assistant/C1AssistantDrawer';
 import { SettingsModal } from './components/SettingsModal';
 import { ThemeSelectorModal } from './components/ThemeSelectorModal';
 import { MessengerDrawer } from './components/messaging/MessengerDrawer';
-import { ApplyJoinScreen } from './components/access/ApplyJoinScreen';
 import { AdminApplicationsPanel } from './components/access/AdminApplicationsPanel';
+
+// Mutually-exclusive main screens (only one renders at a time per currentScreen) —
+// lazy-loaded so the initial bundle doesn't pay for every screen upfront.
+const AuthScreen = lazy(() => import('./components/AuthScreen').then((m) => ({ default: m.AuthScreen })));
+const ProfileSetupScreen = lazy(() => import('./components/ProfileSetupScreen').then((m) => ({ default: m.ProfileSetupScreen })));
+const MainDashboardScreen = lazy(() => import('./components/MainDashboardScreen').then((m) => ({ default: m.MainDashboardScreen })));
+const ExploreScreen = lazy(() => import('./components/explore/ExploreScreen').then((m) => ({ default: m.ExploreScreen })));
+const CollaborationQuestionsPage = lazy(() => import('./components/collaboration/CollaborationQuestionsPage').then((m) => ({ default: m.CollaborationQuestionsPage })));
+const ApplyJoinScreen = lazy(() => import('./components/access/ApplyJoinScreen').then((m) => ({ default: m.ApplyJoinScreen })));
 import { isAdminEmail } from './lib/adminConfig';
 import { Loader2, ClipboardList } from 'lucide-react';
 import {
@@ -201,6 +204,12 @@ export default function App() {
     });
     return unsub;
   }, [currentUser?.id]);
+
+  // Reset scroll position on every screen change — this is a single-page app,
+  // so the browser otherwise keeps whatever scroll offset the previous screen had.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [currentScreen]);
 
   // Public post deep link: /?post=POST_ID
   useEffect(() => {
@@ -418,7 +427,13 @@ export default function App() {
 
       {/* Main View Router */}
       <main className="flex-1">
-        
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center py-24">
+              <Loader2 className="w-6 h-6 animate-spin text-[#E58B13]" />
+            </div>
+          }
+        >
         {/* Screen 1: LANDING PAGE */}
         {currentScreen === 'landing' && (
           <LandingPage
@@ -564,7 +579,7 @@ export default function App() {
             initialEntity={exploreNavParams.entity}
           />
         )}
-
+        </Suspense>
       </main>
 
       {/* Persistent C1 AI Assistant (Accessible Across All Screens) */}
