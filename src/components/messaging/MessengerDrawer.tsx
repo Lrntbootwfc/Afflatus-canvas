@@ -140,8 +140,9 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
   }, [isOpen, selectedId, currentUser.id]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, selectedId]);
+    if (!isOpen || messages.length === 0) return;
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [isOpen, messages.length, selectedId]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();

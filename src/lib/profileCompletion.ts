@@ -2,6 +2,7 @@
  * Basic profile-completion percentage (not progressive 5-Q sets).
  * Based on persisted profile fields only.
  */
+import type { SocialLinks } from '../types';
 
 export type ProfileCompletionInput = {
   name?: string;
@@ -11,7 +12,7 @@ export type ProfileCompletionInput = {
   avatarUrl?: string;
   portfolios?: unknown[];
   workLinks?: unknown[];
-  socialLinks?: Record<string, string | undefined> | null;
+  socialLinks?: SocialLinks | Record<string, string | undefined> | null;
   collaborationScenarios?: {
     q1?: string;
     q2?: string;

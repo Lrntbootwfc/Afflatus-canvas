@@ -20,6 +20,7 @@ import {
   IMAGE_HARD_MAX_BYTES,
   formatBytes,
 } from '../lib/mediaLimits';
+import affilApi from '../lib/affilApi';
 
 interface ImagePickerModalProps {
   isOpen: boolean;
@@ -55,6 +56,7 @@ export const ImagePickerModal: React.FC<ImagePickerModalProps> = ({
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isFlashing, setIsFlashing] = useState<boolean>(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -231,13 +233,27 @@ export const ImagePickerModal: React.FC<ImagePickerModalProps> = ({
     }
   };
 
-  const handleApply = () => {
+  const handleApply = async () => {
     let finalUrl = previewUrl;
     if (activeTab === 'url') {
       finalUrl = urlInput.trim();
     } else if (activeTab === 'monogram') {
       finalUrl = '';
     }
+
+    if (finalUrl.startsWith('data:')) {
+      setIsUploading(true);
+      try {
+        const { url } = await affilApi.uploadImage(finalUrl, isBanner ? 'afflatus/covers' : 'afflatus/avatars');
+        finalUrl = url;
+      } catch (err: any) {
+        alert(err?.response?.data?.error || 'Image upload failed. Please try again.');
+        setIsUploading(false);
+        return;
+      }
+      setIsUploading(false);
+    }
+
     onImageSelected(finalUrl);
     onClose();
   };
@@ -636,10 +652,15 @@ export const ImagePickerModal: React.FC<ImagePickerModalProps> = ({
             <button
               type="button"
               onClick={handleApply}
-              className="px-6 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] shadow-md hover:opacity-90 cursor-pointer flex items-center gap-1.5"
+              disabled={isUploading}
+              className="px-6 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] text-[var(--nav-item-active-text,#181614)] shadow-md hover:opacity-90 cursor-pointer flex items-center gap-1.5 disabled:opacity-60"
             >
-              <Check className="w-3.5 h-3.5" />
-              <span>Apply Photo</span>
+              {isUploading ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Check className="w-3.5 h-3.5" />
+              )}
+              <span>{isUploading ? 'Uploading…' : 'Apply Photo'}</span>
             </button>
           </div>
         </div>

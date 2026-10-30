@@ -1243,7 +1243,8 @@ export async function createConnectionRequest(params: {
   };
 
   if (pairSnap?.exists()) {
-    const existing = { id: pairSnap.id, ...pairSnap.data() } as ConnectionRequest;
+    const pairData = (pairSnap.data() || {}) as Record<string, unknown>;
+    const existing = { id: pairSnap.id, ...pairData } as ConnectionRequest;
     const reopened = await reopenIfDeclined(existing, pairRef);
     if (reopened) return reopened;
     return { connection: existing, alreadyExists: true };
@@ -2210,7 +2211,7 @@ export async function createAiMatchConversation(userId: string, title?: string):
 export async function getAiMatchConversation(
   userId: string,
   conversationId: string
-): Promise<{ id: string; title: string; messages: AiMatchStoredMessage[] } | null> {
+): Promise<{ id: string; title: string; messages: AiMatchStoredMessage[]; sessionLocation: string | null } | null> {
   const current = auth.currentUser;
   if (!current) return null;
   const uid = current.uid;

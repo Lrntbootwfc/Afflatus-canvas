@@ -54,7 +54,6 @@ export const affilApi = {
     client.post('/profiles/me/portfolio', item).then((r) => r.data),
   removePortfolioItem: (id: string) =>
     client.delete(`/profiles/me/portfolio/${id}`).then((r) => r.data),
-  refreshEmbedding: () => client.post('/profiles/me/embed').then((r) => r.data),
   analyzeCollaborationProfile: (answers: Record<string, string>) =>
     client.post('/profiles/analyze-collaboration', { answers }).then((r) => r.data),
 
@@ -163,6 +162,10 @@ export const affilApi = {
   updatePost: (postId: string, body: { userId: string; caption?: string; imageUrl?: string }) =>
     client.put(`/posts/${postId}`, body).then((r) => r.data),
 
+  /** Uploads a base64 data URL to Cloudinary, returns the hosted https URL. */
+  uploadImage: (dataUrl: string, folder?: string) =>
+    client.post('/uploads/image', { dataUrl, folder }).then((r) => r.data as { url: string }),
+
   /** Admin-side bump of collaborationCount for both parties (owner-only rules block peer write). */
   activateCollaborationCount: (connectionId: string) =>
     client.post('/collaborations/activate-count', { connectionId }).then((r) => r.data),
@@ -170,6 +173,12 @@ export const affilApi = {
   /** Live count from connections (collaborating + completed); backfills users.collaborationCount. */
   getCollaborationCount: (userId: string) =>
     client.get(`/users/${userId}/collaboration-count`).then((r) => r.data as { userId: string; count: number }),
+
+  // Project listings — real, role-filtered "need people for a project" posts
+  getProjectListings: () => client.get('/project-listings').then((r) => r.data),
+  createProjectListing: (body: { title: string; description?: string; requiredRoles: string[]; location?: string }) =>
+    client.post('/project-listings', body).then((r) => r.data),
+  deleteProjectListing: (id: string) => client.delete(`/project-listings/${id}`).then((r) => r.data),
 
   // Progressive collaboration questions (optional)
   getCollaborationQuestionsStatus: () =>

@@ -100,8 +100,8 @@ export const C1AssistantDrawer: React.FC<C1AssistantDrawerProps> = ({
 
   // Auto-scroll to bottom
   useEffect(() => {
-    if (isOpen) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isOpen && messages.length > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [messages, isOpen]);
 
