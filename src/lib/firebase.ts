@@ -2442,7 +2442,12 @@ export type ApplicationStatus = 'pending' | 'approved' | 'rejected';
 
 /**
  * Resolve effective application status for access control.
- * Legacy accounts (no applicationStatus) with completed profile or a real role → approved.
+ * ONLY explicit applicationStatus counts:
+ *   - approved  → can open Explore / appear in Explore listings
+ *   - pending   → applied, waiting for admin
+ *   - rejected  → denied
+ * Missing / unknown status → pending (must submit join request; no role/profile auto-approve).
+ * Join request is NOT auto-created on signup — user must submit via Apply screen.
  */
 export function resolveApplicationStatus(profile: {
   applicationStatus?: string | null;
@@ -2457,9 +2462,8 @@ export function resolveApplicationStatus(profile: {
   if (s === 'approved' || s === 'rejected' || s === 'pending') {
     return s as ApplicationStatus;
   }
-  const role = String(profile.primaryRole || '').trim();
-  if (profile.profileCompleted === true) return 'approved';
-  if (role && role.toLowerCase() !== 'creator') return 'approved';
+  // No legacy auto-approve via primaryRole or profileCompleted.
+  // Unapproved users must not open Explore or appear in Explore feeds.
   return 'pending';
 }
 

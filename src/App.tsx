@@ -74,16 +74,20 @@ export default function App() {
       return;
     }
     if (appStatus === 'pending') {
-      // Not applied yet vs waiting for admin
-      if (profile.applicationStatus === 'pending' || profile.applicationSubmittedAt) {
+      // No Explore until join request is submitted AND admin sets applicationStatus=approved.
+      // Applied (waiting) → pending screen; not applied yet → apply screen.
+      if (
+        String(profile.applicationStatus || '').toLowerCase() === 'pending' ||
+        !!profile.applicationSubmittedAt
+      ) {
         setCurrentScreen('pending');
       } else {
         setCurrentScreen('apply');
       }
       return;
     }
-    // APPROVED: Explore is visible immediately.
-    // Interaction (messages, collaborate, posting) stays gated by profileCompleted.
+    // APPROVED only: Explore/dashboard allowed.
+    // Interaction (messages, collaborate, posting) still gated by profileCompleted.
     setCurrentScreen(profile.profileCompleted ? 'dashboard' : 'explore');
   };
 
@@ -193,10 +197,17 @@ export default function App() {
         }
         if (st === 'rejected' && prevScreen !== 'rejected') return 'rejected';
         if (st === 'pending') {
-          if (profile.applicationStatus === 'pending' || profile.applicationSubmittedAt) {
-            if (prevScreen === 'dashboard' || prevScreen === 'explore' || prevScreen === 'onboarding') {
-              return 'pending';
-            }
+          const applied =
+            String(profile.applicationStatus || '').toLowerCase() === 'pending' ||
+            !!profile.applicationSubmittedAt;
+          // Kick off Explore/dashboard/onboarding if not approved
+          if (
+            prevScreen === 'dashboard' ||
+            prevScreen === 'explore' ||
+            prevScreen === 'onboarding' ||
+            prevScreen === 'collab-questions'
+          ) {
+            return applied ? 'pending' : 'apply';
           }
         }
         return prevScreen;
