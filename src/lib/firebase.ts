@@ -43,6 +43,7 @@ import type {
   ExploreFeedResponse,
 } from '../types/explore';
 import { computeProfileCompletion } from './profileCompletion';
+import affilApi, { setAuth } from './affilApi';
 
 /** Connection request stored in Firestore */
 export interface SharedPostRef {
@@ -2513,71 +2514,21 @@ export async function submitJoinApplication(params: {
   if (!current) {
     throw new Error('You must be signed in to apply.');
   }
-
-  // Always bind to Auth UID. Ignore any stale profile.id mismatch.
   const uid = current.uid;
-  await current.getIdToken();
-
-  const now = new Date().toISOString();
-  const message = (params.message || '').trim().slice(0, 2000);
-  const email = (params.email || current.email || '').trim();
-  const name = (params.name || current.displayName || email.split('@')[0] || 'Applicant').trim();
-
-  const appPayload = {
-    userId: uid,
-    email,
-    name,
-    message,
-    status: 'pending',
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  const userRef = doc(db, 'users', uid);
-  const appRef = doc(db, 'applications', uid);
-
+  const token = await current.getIdToken();
+  setAuth(uid, token);
   try {
-    await setDoc(
-      userRef,
-      {
-        id: uid,
-        email,
-        name,
-        applicationStatus: 'pending',
-        applicationMessage: message,
-        applicationSubmittedAt: now,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
+    await affilApi.submitApplication({
+      message: (params.message || '').trim().slice(0, 2000),
+      name: (params.name || current.displayName || '').trim(),
+    });
   } catch (err: any) {
-    console.error('[submitJoinApplication] users bootstrap failed', err);
-    throw new Error(
-      String(err?.message || '').toLowerCase().includes('permission')
-        ? 'Insufficient permission to save your account. Publish the latest firestore.rules (users create/update for your own uid).'
-        : String(err?.message || 'Failed to save your account.')
-    );
-  }
-
-  try {
-    // Full replace — do NOT use merge. merge:true on a missing applications
-    // doc is often evaluated as UPDATE, and resource.data is null → denied.
-    await setDoc(appRef, appPayload);
-  } catch (err: any) {
-    const msg = String(err?.message || err || '');
-    console.error('[submitJoinApplication] applications write failed', err);
-    throw new Error(
-      msg.toLowerCase().includes('permission')
-        ? 'Insufficient permission to submit application. Publish the latest firestore.rules and try again.'
-        : msg || 'Failed to submit application.'
-    );
-  }
-
-  const verify = await getDoc(appRef);
-  if (!verify.exists() || String((verify.data() as any)?.status) !== 'pending') {
-    throw new Error('Application was not saved as pending. Publish the latest firestore.rules and retry.');
+    const msg = String(err?.response?.data?.error || err?.message || err || '');
+    console.error('[submitJoinApplication] API failed', err);
+    throw new Error(msg || 'Failed to submit application.');
   }
 }
+
 
 export async function listPendingApplications(): Promise<
   Array<{
@@ -2585,51 +2536,30 @@ export async function listPendingApplications(): Promise<
     email: string;
     name: string;
     message: string;
-    status: string;
     createdAt: string;
   }>
 > {
   const current = auth.currentUser;
   if (!current) throw new Error('Not signed in');
-
-  // Prefer filtered query; fall back to full collection scan filtered client-side
-  // (still requires admin list rule).
-  let docs: Array<{ id: string; data: () => any }> = [];
+  const token = await current.getIdToken();
+  setAuth(current.uid, token);
   try {
-    const snap = await getDocs(
-      query(collection(db, 'applications'), where('status', '==', 'pending'), limit(100))
-    );
-    docs = snap.docs as any;
+    const data = await affilApi.listPendingApplications();
+    const list = (data?.applications || data || []) as Array<any>;
+    return list.map((item) => ({
+      userId: String(item.userId || ''),
+      email: String(item.email || ''),
+      name: String(item.name || ''),
+      message: String(item.message || ''),
+      createdAt: String(item.createdAt || ''),
+    }));
   } catch (err: any) {
-    console.warn('[listPendingApplications] filtered query failed, trying full collection', err);
-    try {
-      const snap = await getDocs(collection(db, 'applications'));
-      docs = snap.docs as any;
-    } catch (err2: any) {
-      const msg = String(err2?.message || err2 || '');
-      throw new Error(
-        msg.toLowerCase().includes('permission')
-          ? 'Insufficient permission to list applications. Sign in as an authorized admin and publish firestore.rules with isAdmin().'
-          : msg || 'Failed to list applications.'
-      );
-    }
+    const msg = String(err?.response?.data?.error || err?.message || err || '');
+    console.error('[listPendingApplications] API failed', err);
+    throw new Error(msg || 'Could not load applications');
   }
-
-  return docs
-    .map((d) => {
-      const data = d.data() as any;
-      return {
-        userId: d.id,
-        email: data.email || '',
-        name: data.name || '',
-        message: data.message || '',
-        status: String(data.status || ''),
-        createdAt: typeof data.createdAt === 'string' ? data.createdAt : toSortKey(data.createdAt),
-      };
-    })
-    .filter((row) => row.status.toLowerCase() === 'pending')
-    .sort((a, b) => toSortMs(b.createdAt) - toSortMs(a.createdAt));
 }
+
 
 export async function reviewJoinApplication(params: {
   applicantUserId: string;
@@ -2638,72 +2568,18 @@ export async function reviewJoinApplication(params: {
   adminEmail: string;
 }): Promise<void> {
   const current = auth.currentUser;
-  if (!current || current.uid !== params.adminUserId) {
-    throw new Error('Not authorized.');
-  }
-  if (params.decision !== 'approved' && params.decision !== 'rejected') {
-    throw new Error('Invalid decision.');
-  }
-
-  const now = new Date().toISOString();
-  const appRef = doc(db, 'applications', params.applicantUserId);
-
+  if (!current) throw new Error('Not signed in');
+  const token = await current.getIdToken();
+  setAuth(current.uid, token);
   try {
-    await setDoc(
-      appRef,
-      {
-        status: params.decision,
-        reviewedAt: now,
-        reviewedBy: params.adminEmail,
-        updatedAt: now,
-      },
-      { merge: true }
-    );
+    await affilApi.reviewApplication(params.applicantUserId, params.decision);
   } catch (err: any) {
-    console.error('[reviewJoinApplication] applications update failed', err);
-    throw new Error(
-      String(err?.message || '').toLowerCase().includes('permission')
-        ? 'Insufficient permission to review applications. Your account must be listed as admin in firestore.rules and adminConfig.ts.'
-        : String(err?.message || 'Failed to update application.')
-    );
-  }
-
-  try {
-    await setDoc(
-      doc(db, 'users', params.applicantUserId),
-      {
-        applicationStatus: params.decision,
-        applicationReviewedAt: now,
-        applicationReviewedBy: params.adminEmail,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
-  } catch (err: any) {
-    console.error('[reviewJoinApplication] users update failed', err);
-    throw new Error(
-      String(err?.message || '').toLowerCase().includes('permission')
-        ? 'Insufficient permission to update applicant user status. Admin must be allowed to update users in firestore.rules.'
-        : String(err?.message || 'Failed to update applicant status.')
-    );
-  }
-
-  // Persistent alert for applicant (existing notifications collection)
-  const notif = await createNotification({
-    userId: params.applicantUserId,
-    type: params.decision === 'approved' ? 'connection_accepted' : 'message',
-    title: params.decision === 'approved' ? 'Application approved' : 'Application rejected',
-    body:
-      params.decision === 'approved'
-        ? 'Welcome to Afflatus. Complete your profile setup to unlock full platform interactions. Explore is available for browsing.'
-        : 'Your Afflatus application was not approved at this time.',
-    relatedId: params.applicantUserId,
-    fromUserId: params.adminUserId,
-  });
-  if (!notif?.id) {
-    console.warn('[reviewJoinApplication] notification may not have persisted');
+    const msg = String(err?.response?.data?.error || err?.message || err || '');
+    console.error('[reviewJoinApplication] API failed', err);
+    throw new Error(msg || 'Failed to update application.');
   }
 }
+
 
 export { onAuthStateChanged };
 

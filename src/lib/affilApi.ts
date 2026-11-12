@@ -189,6 +189,14 @@ export const affilApi = {
     questionIds: string[];
     answers: Record<string, string | string[]>;
   }) => client.post('/collaboration-questions/submit-set', body).then((r) => r.data),
+
+  // Join applications (server-mediated; enqueues transactional email)
+  submitApplication: (body: { message?: string; name?: string }) =>
+    client.post('/applications', body).then((r) => r.data),
+  listPendingApplications: () =>
+    client.get('/applications/pending').then((r) => r.data),
+  reviewApplication: (userId: string, decision: 'approved' | 'rejected') =>
+    client.post(`/applications/${userId}/review`, { decision }).then((r) => r.data),
 };
 
 export default affilApi;

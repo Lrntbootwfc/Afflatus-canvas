@@ -2,9 +2,13 @@
  * Authorized Afflatus admin emails.
  * Add additional Gmail addresses to this array to grant admin access.
  * Also update firestore.rules isAdmin() email list to match.
+ * Backend AFFLATUS_ADMIN_EMAILS env should list the same addresses.
  */
 export const AFFLATUS_ADMIN_EMAILS: string[] = [
   'divyasharmagdscoist@gmail.com',
+  'devbhagat383@gmail.com',
+  'akshayadoffical@gmail.com',
+  'dhruvbhardwaj401@gmail.com',
 ];
 
 export function isAdminEmail(email: string | null | undefined): boolean {
