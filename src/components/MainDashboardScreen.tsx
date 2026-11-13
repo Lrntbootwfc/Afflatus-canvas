@@ -59,6 +59,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
 }) => {
   // Chat State
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [productionDraft, setProductionDraft] = useState<any>(null);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -303,6 +304,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
           messages: chatHistory,
           sessionLocation: sessionLocation || undefined,
           defaultLocation: profileLoc || undefined,
+          productionDraft: productionDraft || undefined,
         }),
       });
 
@@ -312,7 +314,14 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
         throw new Error(data.error || 'Failed to get recommendations');
       }
 
-      if (data.outOfScope || data.conversational) {
+      if (data.productionDraft) {
+        setProductionDraft(data.productionDraft);
+      }
+
+      const hasCandidates = (Array.isArray(data.candidates) && data.candidates.length > 0)
+        || (Array.isArray(data.results) && data.results.length > 0)
+        || data.showCards === true;
+      if ((data.outOfScope || data.conversational) && !hasCandidates) {
         const withAssistant: ChatMessage[] = [
           ...newMessages,
           {
@@ -332,7 +341,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
         return;
       }
 
-      const creatorsFound = (data.candidates || []).map((c: any) => {
+      const creatorsFound = (data.candidates || data.results || []).map((c: any) => {
         const raw = typeof c.score === 'number' ? c.score : 0;
         const relevanceScore = raw > 1 ? raw / 100 : raw;
         const profile = c.profile || {};
