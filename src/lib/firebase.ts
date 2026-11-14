@@ -43,7 +43,6 @@ import type {
   ExploreFeedResponse,
 } from '../types/explore';
 import { computeProfileCompletion } from './profileCompletion';
-import affilApi, { setAuth } from './affilApi';
 
 /** Connection request stored in Firestore */
 export interface SharedPostRef {
@@ -116,63 +115,23 @@ export function sanitizeUserFacingError(err: unknown, fallback = 'Something went
 
 
 // ---------------------------------------------------------------------------
-// Shared onSnapshot registry (race-safe, hardened)
-// ---------------------------------------------------------------------------
-// Root cause of "Target ID already exists":
-// React StrictMode (and fast nav) does mount→unmount→remount. The first unmount
-// called Firestore unsubscribe(); the remount immediately called onSnapshot()
-// for the same query while the WebChannel still held the target id.
-//
-// Fix:
-// 1. Ref-counted fan-out: one Firestore listener per stable key.
-// 2. Deferred teardown with cancellable timer (not microtask — SDK needs ~50–150ms
-//    to fully release the target after unsub).
-// 3. If a new subscriber arrives while closing, cancel teardown and keep the
-//    same underlying listener (generation unchanged).
-// 4. In-flight start lock so concurrent first-subscribers for a key cannot
-//    both call startListen.
+// Shared onSnapshot registry
+// Multiple React components often subscribe to the same query (e.g. HeaderNav
+// badge + Network panel). Two identical onSnapshot targets → intermittent
+// "INTERNAL ASSERTION FAILED / Unexpected state (targetId)".
+// One Firestore listen per key; ref-counted fan-out to local listeners.
 // ---------------------------------------------------------------------------
 type SharedSnapEntry = {
   refCount: number;
-  unsubFs: Unsubscribe | null;
+  unsubFs: Unsubscribe;
   listeners: Set<(data: unknown) => void>;
   errorListeners: Set<(err: Error) => void>;
   lastData: unknown;
   hasData: boolean;
-  /** Generation token; close only proceeds if generation unchanged */
-  generation: number;
-  closing: boolean;
-  closeTimer: ReturnType<typeof setTimeout> | null;
 };
 
 const __sharedSnaps = new Map<string, SharedSnapEntry>();
-/** Keys currently executing startListen — prevents concurrent first registration */
-const __startingKeys = new Set<string>();
 
-/** How long to wait after last consumer leaves before calling Firestore unsub */
-const TEARDOWN_DELAY_MS = 120;
-
-function isBenignListenRace(err: unknown): boolean {
-  const msg = String((err as any)?.message || err || '');
-  return (
-    /target id already exists/i.test(msg) ||
-    /internal assertion/i.test(msg) ||
-    /unexpected state/i.test(msg)
-  );
-}
-
-function cancelPendingClose(entry: SharedSnapEntry): void {
-  if (entry.closeTimer != null) {
-    clearTimeout(entry.closeTimer);
-    entry.closeTimer = null;
-  }
-  entry.closing = false;
-}
-
-/**
- * One Firestore onSnapshot per key. Safe under StrictMode double-mount and
- * rapid navigation between Messenger sections.
- */
 export function shareOnSnapshot<T>(
   key: string,
   startListen: (
@@ -183,93 +142,47 @@ export function shareOnSnapshot<T>(
   onError?: (err: Error) => void
 ): Unsubscribe {
   let entry = __sharedSnaps.get(key);
-
-  if (entry) {
-    // Cancel any pending teardown — reuse the still-live Firestore listener
-    cancelPendingClose(entry);
-    entry.refCount += 1;
-    entry.listeners.add(onChange as (data: unknown) => void);
-    if (onError) entry.errorListeners.add(onError);
-    if (entry.hasData) {
-      try {
-        onChange(entry.lastData as T);
-      } catch {
-        /* isolate subscriber errors */
-      }
-    }
-  } else {
-    // First consumer for this key — create the shared entry and start listen once.
-    // Guard against concurrent first-subscribers (e.g. two components mounting in same tick).
-    if (__startingKeys.has(key)) {
-      // Another start is in flight; spin on microtasks until entry exists or give up.
-      // Practically: the first starter will set the entry synchronously after startListen returns.
-      // We register as a late joiner by waiting one microtask.
-      let lateCleaned = false;
-      let lateUnsub: Unsubscribe | null = null;
-      queueMicrotask(() => {
-        if (lateCleaned) return;
-        lateUnsub = shareOnSnapshot(key, startListen, onChange, onError);
-      });
-      return () => {
-        lateCleaned = true;
-        lateUnsub?.();
-      };
-    }
-
-    __startingKeys.add(key);
+  if (!entry) {
     const listeners = new Set<(data: unknown) => void>();
     const errorListeners = new Set<(err: Error) => void>();
     listeners.add(onChange as (data: unknown) => void);
     if (onError) errorListeners.add(onError);
 
-    const fanoutData = (data: T) => {
-      const e = __sharedSnaps.get(key);
-      if (!e) return;
-      e.lastData = data;
-      e.hasData = true;
-      e.listeners.forEach((fn) => {
-        try {
-          fn(data);
-        } catch (err) {
-          console.warn('[shareOnSnapshot] listener error', err);
+    const unsubFs = startListen(
+      (data) => {
+        const e = __sharedSnaps.get(key);
+        if (!e) return;
+        e.lastData = data;
+        e.hasData = true;
+        e.listeners.forEach((fn) => {
+          try {
+            fn(data);
+          } catch (err) {
+            console.warn('[shareOnSnapshot] listener error', err);
+          }
+        });
+      },
+      (err) => {
+        const msg = String((err as any)?.message || err || '');
+        // Swallow known SDK race noise; do not surface as user-facing failures
+        if (
+          /target id already exists/i.test(msg) ||
+          /internal assertion/i.test(msg) ||
+          /unexpected state/i.test(msg)
+        ) {
+          console.warn('[Firestore] shared listen race (ignored):', msg.slice(0, 120));
+          return;
         }
-      });
-    };
-
-    const fanoutErr = (err: Error) => {
-      if (isBenignListenRace(err)) {
-        // Should be rare with deferred teardown; keep diagnostics without treating as fatal
-        console.info(
-          '[shareOnSnapshot] listen race (suppressed) on',
-          key,
-          String(err.message || err).slice(0, 100)
-        );
-        return;
+        const e = __sharedSnaps.get(key);
+        e?.errorListeners.forEach((fn) => {
+          try {
+            fn(err);
+          } catch {
+            /* ignore */
+          }
+        });
       }
-      const e = __sharedSnaps.get(key);
-      e?.errorListeners.forEach((fn) => {
-        try {
-          fn(err);
-        } catch {
-          /* isolate */
-        }
-      });
-    };
-
-    let unsubFs: Unsubscribe = () => {};
-    try {
-      unsubFs = startListen(fanoutData, fanoutErr);
-    } catch (err) {
-      __startingKeys.delete(key);
-      if (isBenignListenRace(err)) {
-        console.error('[shareOnSnapshot] failed to start listen', key, err);
-        onError?.(err as Error);
-        return () => {};
-      }
-      throw err;
-    } finally {
-      __startingKeys.delete(key);
-    }
+    );
 
     entry = {
       refCount: 1,
@@ -278,11 +191,19 @@ export function shareOnSnapshot<T>(
       errorListeners,
       lastData: undefined,
       hasData: false,
-      generation: 1,
-      closing: false,
-      closeTimer: null,
     };
     __sharedSnaps.set(key, entry);
+  } else {
+    entry.refCount += 1;
+    entry.listeners.add(onChange as (data: unknown) => void);
+    if (onError) entry.errorListeners.add(onError);
+    if (entry.hasData) {
+      try {
+        onChange(entry.lastData as T);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   let cleaned = false;
@@ -294,32 +215,14 @@ export function shareOnSnapshot<T>(
     e.listeners.delete(onChange as (data: unknown) => void);
     if (onError) e.errorListeners.delete(onError);
     e.refCount -= 1;
-    if (e.refCount > 0) return;
-
-    // Last consumer left — schedule deferred teardown so StrictMode remount
-    // (or fast re-subscribe) can cancel and keep the same target.
-    cancelPendingClose(e);
-    e.closing = true;
-    const gen = e.generation;
-    e.closeTimer = setTimeout(() => {
-      const cur = __sharedSnaps.get(key);
-      if (!cur) return;
-      if (cur.generation !== gen) return;
-      if (cur.refCount > 0) {
-        cancelPendingClose(cur);
-        return;
-      }
-      if (!cur.closing) return;
+    if (e.refCount <= 0) {
       __sharedSnaps.delete(key);
-      const u = cur.unsubFs;
-      cur.unsubFs = null;
-      cur.closeTimer = null;
       try {
-        u?.();
+        e.unsubFs();
       } catch (err) {
-        console.warn('[shareOnSnapshot] unsub failed', key, err);
+        console.warn('[shareOnSnapshot] unsub failed', err);
       }
-    }, TEARDOWN_DELAY_MS);
+    }
   };
 }
 
@@ -480,37 +383,16 @@ async function ensureFirestoreOnline(): Promise<void> {
 
 /** getDoc that prefers server; clearer errors when Firestore is unreachable */
 async function getDocOnline(ref: ReturnType<typeof doc>) {
-  // If browser reports offline, skip server round-trip and use cache/local
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-    return await getDoc(ref);
-  }
-  try {
-    await ensureFirestoreOnline();
-  } catch {
-    /* enableNetwork may fail offline — continue to read paths */
-  }
+  await ensureFirestoreOnline();
   try {
     return await getDocFromServer(ref);
   } catch (err: any) {
     const msg = String(err?.message || err || '');
-    const offline =
-      err?.code === 'unavailable' ||
-      /offline/i.test(msg) ||
-      /client is offline/i.test(msg) ||
-      /Failed to get document because the client is offline/i.test(msg);
-    // Always try default getDoc (cache) before giving up
-    try {
+    // Fall back to cache/default getDoc if server path fails for non-offline reasons
+    if (!msg.includes('offline') && err?.code !== 'unavailable') {
       return await getDoc(ref);
-    } catch (err2: any) {
-      if (offline) {
-        // Re-throw a single clear offline error (callers may fall back)
-        const e = new Error('Firestore client is offline');
-        (e as any).code = 'unavailable';
-        (e as any).cause = err2;
-        throw e;
-      }
-      throw err2;
     }
+    throw err;
   }
 }
 
@@ -886,14 +768,11 @@ export async function getProfileFromFirestore(userId: string): Promise<CreatorPr
     try {
       snap = await getDocOnline(userRef);
     } catch (err: any) {
-      const msg = String(err?.message || err || '');
-      const offline = /offline/i.test(msg) || err?.code === 'unavailable';
-      if (!offline) {
-        console.warn('[Firestore] profile read failed:', msg.slice(0, 120));
-      }
+      console.warn('[Firestore] getDocOnline profile failed, trying cache:', err?.message || err);
       try {
         snap = await getDoc(userRef);
-      } catch {
+      } catch (err2: any) {
+        console.warn('[Firestore] getDoc profile failed:', err2?.message || err2);
         snap = null;
       }
     }
@@ -1364,8 +1243,7 @@ export async function createConnectionRequest(params: {
   };
 
   if (pairSnap?.exists()) {
-    const pairData = (pairSnap.data() || {}) as Record<string, unknown>;
-    const existing = { id: pairSnap.id, ...pairData } as ConnectionRequest;
+    const existing = { id: pairSnap.id, ...pairSnap.data() } as ConnectionRequest;
     const reopened = await reopenIfDeclined(existing, pairRef);
     if (reopened) return reopened;
     return { connection: existing, alreadyExists: true };
@@ -2332,7 +2210,7 @@ export async function createAiMatchConversation(userId: string, title?: string):
 export async function getAiMatchConversation(
   userId: string,
   conversationId: string
-): Promise<{ id: string; title: string; messages: AiMatchStoredMessage[]; sessionLocation: string | null } | null> {
+): Promise<{ id: string; title: string; messages: AiMatchStoredMessage[] } | null> {
   const current = auth.currentUser;
   if (!current) return null;
   const uid = current.uid;
@@ -2563,12 +2441,7 @@ export type ApplicationStatus = 'pending' | 'approved' | 'rejected';
 
 /**
  * Resolve effective application status for access control.
- * ONLY explicit applicationStatus counts:
- *   - approved  → can open Explore / appear in Explore listings
- *   - pending   → applied, waiting for admin
- *   - rejected  → denied
- * Missing / unknown status → pending (must submit join request; no role/profile auto-approve).
- * Join request is NOT auto-created on signup — user must submit via Apply screen.
+ * Legacy accounts (no applicationStatus) with completed profile or a real role → approved.
  */
 export function resolveApplicationStatus(profile: {
   applicationStatus?: string | null;
@@ -2583,8 +2456,9 @@ export function resolveApplicationStatus(profile: {
   if (s === 'approved' || s === 'rejected' || s === 'pending') {
     return s as ApplicationStatus;
   }
-  // No legacy auto-approve via primaryRole or profileCompleted.
-  // Unapproved users must not open Explore or appear in Explore feeds.
+  const role = String(profile.primaryRole || '').trim();
+  if (profile.profileCompleted === true) return 'approved';
+  if (role && role.toLowerCase() !== 'creator') return 'approved';
   return 'pending';
 }
 
@@ -2634,21 +2508,71 @@ export async function submitJoinApplication(params: {
   if (!current) {
     throw new Error('You must be signed in to apply.');
   }
+
+  // Always bind to Auth UID. Ignore any stale profile.id mismatch.
   const uid = current.uid;
-  const token = await current.getIdToken();
-  setAuth(uid, token);
+  await current.getIdToken();
+
+  const now = new Date().toISOString();
+  const message = (params.message || '').trim().slice(0, 2000);
+  const email = (params.email || current.email || '').trim();
+  const name = (params.name || current.displayName || email.split('@')[0] || 'Applicant').trim();
+
+  const appPayload = {
+    userId: uid,
+    email,
+    name,
+    message,
+    status: 'pending',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const userRef = doc(db, 'users', uid);
+  const appRef = doc(db, 'applications', uid);
+
   try {
-    await affilApi.submitApplication({
-      message: (params.message || '').trim().slice(0, 2000),
-      name: (params.name || current.displayName || '').trim(),
-    });
+    await setDoc(
+      userRef,
+      {
+        id: uid,
+        email,
+        name,
+        applicationStatus: 'pending',
+        applicationMessage: message,
+        applicationSubmittedAt: now,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
   } catch (err: any) {
-    const msg = String(err?.response?.data?.error || err?.message || err || '');
-    console.error('[submitJoinApplication] API failed', err);
-    throw new Error(msg || 'Failed to submit application.');
+    console.error('[submitJoinApplication] users bootstrap failed', err);
+    throw new Error(
+      String(err?.message || '').toLowerCase().includes('permission')
+        ? 'Insufficient permission to save your account. Publish the latest firestore.rules (users create/update for your own uid).'
+        : String(err?.message || 'Failed to save your account.')
+    );
+  }
+
+  try {
+    // Full replace — do NOT use merge. merge:true on a missing applications
+    // doc is often evaluated as UPDATE, and resource.data is null → denied.
+    await setDoc(appRef, appPayload);
+  } catch (err: any) {
+    const msg = String(err?.message || err || '');
+    console.error('[submitJoinApplication] applications write failed', err);
+    throw new Error(
+      msg.toLowerCase().includes('permission')
+        ? 'Insufficient permission to submit application. Publish the latest firestore.rules and try again.'
+        : msg || 'Failed to submit application.'
+    );
+  }
+
+  const verify = await getDoc(appRef);
+  if (!verify.exists() || String((verify.data() as any)?.status) !== 'pending') {
+    throw new Error('Application was not saved as pending. Publish the latest firestore.rules and retry.');
   }
 }
-
 
 export async function listPendingApplications(): Promise<
   Array<{
@@ -2656,28 +2580,72 @@ export async function listPendingApplications(): Promise<
     email: string;
     name: string;
     message: string;
+    status: string;
     createdAt: string;
   }>
 > {
   const current = auth.currentUser;
   if (!current) throw new Error('Not signed in');
-  const token = await current.getIdToken();
-  setAuth(current.uid, token);
+
+  // Prefer Main Backend when available (avoids client Firestore rule gaps for admins).
   try {
-    const data = await affilApi.listPendingApplications();
-    const list = (data?.applications || data || []) as Array<any>;
-    return list.map((item) => ({
-      userId: String(item.userId || ''),
-      email: String(item.email || ''),
-      name: String(item.name || ''),
-      message: String(item.message || ''),
-      createdAt: String(item.createdAt || ''),
-    }));
-  } catch (err: any) {
-    const msg = String(err?.response?.data?.error || err?.message || err || '');
-    console.error('[listPendingApplications] API failed', err);
-    throw new Error(msg || 'Could not load applications');
+    const { default: affilApi } = await import('./affilApi');
+    if (typeof affilApi.listPendingApplications === 'function') {
+      const rows = await affilApi.listPendingApplications();
+      if (Array.isArray(rows)) {
+        return rows
+          .map((data: any) => ({
+            userId: String(data.userId || data.id || ''),
+            email: String(data.email || ''),
+            name: String(data.name || ''),
+            message: String(data.message || ''),
+            status: String(data.status || 'pending'),
+            createdAt: typeof data.createdAt === 'string' ? data.createdAt : toSortKey(data.createdAt),
+          }))
+          .filter((row) => row.userId && row.status.toLowerCase() === 'pending')
+          .sort((a, b) => toSortMs(b.createdAt) - toSortMs(a.createdAt));
+      }
+    }
+  } catch (err) {
+    console.warn('[listPendingApplications] API failed', err);
   }
+
+  // Firestore fallback (requires admin rules).
+  let docs: Array<{ id: string; data: () => any }> = [];
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'applications'), where('status', '==', 'pending'), limit(100))
+    );
+    docs = snap.docs as any;
+  } catch (err: any) {
+    console.warn('[listPendingApplications] filtered query failed, trying full collection', err);
+    try {
+      const snap = await getDocs(collection(db, 'applications'));
+      docs = snap.docs as any;
+    } catch (err2: any) {
+      const msg = String(err2?.message || err2 || '');
+      throw new Error(
+        msg.toLowerCase().includes('permission')
+          ? 'Insufficient permission to list applications. Sign in as an authorized admin and publish firestore.rules with isAdmin().'
+          : msg || 'Failed to list applications.'
+      );
+    }
+  }
+
+  return docs
+    .map((d) => {
+      const data = d.data() as any;
+      return {
+        userId: d.id,
+        email: data.email || '',
+        name: data.name || '',
+        message: data.message || '',
+        status: String(data.status || ''),
+        createdAt: typeof data.createdAt === 'string' ? data.createdAt : toSortKey(data.createdAt),
+      };
+    })
+    .filter((row) => row.status.toLowerCase() === 'pending')
+    .sort((a, b) => toSortMs(b.createdAt) - toSortMs(a.createdAt));
 }
 
 
@@ -2688,18 +2656,72 @@ export async function reviewJoinApplication(params: {
   adminEmail: string;
 }): Promise<void> {
   const current = auth.currentUser;
-  if (!current) throw new Error('Not signed in');
-  const token = await current.getIdToken();
-  setAuth(current.uid, token);
+  if (!current || current.uid !== params.adminUserId) {
+    throw new Error('Not authorized.');
+  }
+  if (params.decision !== 'approved' && params.decision !== 'rejected') {
+    throw new Error('Invalid decision.');
+  }
+
+  const now = new Date().toISOString();
+  const appRef = doc(db, 'applications', params.applicantUserId);
+
   try {
-    await affilApi.reviewApplication(params.applicantUserId, params.decision);
+    await setDoc(
+      appRef,
+      {
+        status: params.decision,
+        reviewedAt: now,
+        reviewedBy: params.adminEmail,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
   } catch (err: any) {
-    const msg = String(err?.response?.data?.error || err?.message || err || '');
-    console.error('[reviewJoinApplication] API failed', err);
-    throw new Error(msg || 'Failed to update application.');
+    console.error('[reviewJoinApplication] applications update failed', err);
+    throw new Error(
+      String(err?.message || '').toLowerCase().includes('permission')
+        ? 'Insufficient permission to review applications. Your account must be listed as admin in firestore.rules and adminConfig.ts.'
+        : String(err?.message || 'Failed to update application.')
+    );
+  }
+
+  try {
+    await setDoc(
+      doc(db, 'users', params.applicantUserId),
+      {
+        applicationStatus: params.decision,
+        applicationReviewedAt: now,
+        applicationReviewedBy: params.adminEmail,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    console.error('[reviewJoinApplication] users update failed', err);
+    throw new Error(
+      String(err?.message || '').toLowerCase().includes('permission')
+        ? 'Insufficient permission to update applicant user status. Admin must be allowed to update users in firestore.rules.'
+        : String(err?.message || 'Failed to update applicant status.')
+    );
+  }
+
+  // Persistent alert for applicant (existing notifications collection)
+  const notif = await createNotification({
+    userId: params.applicantUserId,
+    type: params.decision === 'approved' ? 'connection_accepted' : 'message',
+    title: params.decision === 'approved' ? 'Application approved' : 'Application rejected',
+    body:
+      params.decision === 'approved'
+        ? 'Welcome to Afflatus. Complete your profile setup to unlock full platform interactions. Explore is available for browsing.'
+        : 'Your Afflatus application was not approved at this time.',
+    relatedId: params.applicantUserId,
+    fromUserId: params.adminUserId,
+  });
+  if (!notif?.id) {
+    console.warn('[reviewJoinApplication] notification may not have persisted');
   }
 }
-
 
 export { onAuthStateChanged };
 

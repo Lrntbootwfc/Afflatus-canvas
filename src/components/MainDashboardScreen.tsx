@@ -68,6 +68,8 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
   const [historyLoading, setHistoryLoading] = useState(false);
   /** Active location for THIS conversation only (not profile memory) */
   const [sessionLocation, setSessionLocation] = useState<string | null>(null);
+  /** Multi-turn film production draft (type, budget, roles) kept across turns */
+  const [productionDraft, setProductionDraft] = useState<any | null>(null);
 
   // Connections State (Secondary Section)
   const [incomingConnections, setIncomingConnections] = useState<ConnectionRequest[]>([]);
@@ -132,6 +134,8 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
   const startNewConversation = () => {
     setMessages([]);
     setConversationId(null);
+    setSessionLocation(null);
+    setProductionDraft(null);
     setHistoryOpen(false);
   };
 
@@ -172,6 +176,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
         setMessages([]);
         setConversationId(null);
         setSessionLocation(null);
+        setProductionDraft(null);
       }
       await refreshConversationList();
     } catch (e: any) {
@@ -296,6 +301,8 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
           messages: chatHistory,
           sessionLocation: sessionLocation || undefined,
           defaultLocation: profileLoc || undefined,
+          productionDraft: productionDraft || undefined,
+          requesterId: currentUser.id,
         }),
       });
 
@@ -318,7 +325,13 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
         throw new Error(serverMsg);
       }
 
-      if (data.outOfScope || data.conversational) {
+      if (data.productionDraft) {
+        setProductionDraft(data.productionDraft);
+      }
+
+      // Conversational replies can still include creator cards (e.g. seeking_me / crew search)
+      const conversationalCandidates = Array.isArray(data.candidates) ? data.candidates : [];
+      if ((data.outOfScope || data.conversational) && conversationalCandidates.length === 0) {
         const withAssistant: ChatMessage[] = [
           ...newMessages,
           {
@@ -326,7 +339,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
             content:
               data.message ||
               (data.conversational
-                ? "Tell me a role and city when you want matches — e.g. \"cinematographer in Mumbai\"."
+                ? "Ask me any filmmaking question, or a role + city when you want matches — e.g. \"cinematographer in Mumbai\"."
                 : "I'm Afflatus AI Match — ask me about finding creators or using Afflatus."),
           },
         ];
@@ -426,9 +439,9 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
   };
 
   return (
-    <div className="w-full min-h-[100dvh] py-4 sm:py-8 px-3 sm:px-6 lg:px-8 max-w-5xl mx-auto space-y-4 sm:space-y-8 animate-in fade-in duration-200 flex flex-col pb-[max(1rem,env(safe-area-inset-bottom))]">
+    <div className="w-full min-h-[100dvh] py-4 sm:py-8 px-3 sm:px-6 lg:px-8 max-w-[1600px] mx-auto space-y-4 sm:space-y-8 animate-in fade-in duration-200 flex flex-col pb-[max(1rem,env(safe-area-inset-bottom))]">
       
-      {/* Top Bar: Profile Actions & Connections */}
+      {/* Top Bar: Connections (widened chat layout — matches dhruv merge) */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-4 border-b border-[var(--card-border)]">
         <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
           <div className="bg-[var(--card-inner-bg)] px-4 py-2 rounded-2xl border border-[var(--card-inner-border)] flex items-center gap-3">
@@ -440,13 +453,6 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
               <p className="text-xs font-semibold text-[var(--text-primary)]">Afflatus AI Match</p>
             </div>
           </div>
-
-          <button
-            onClick={onEditProfile}
-            className="text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-          >
-            Edit Profile
-          </button>
         </div>
 
         {incomingConnections.length > 0 && (
@@ -460,11 +466,11 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
         )}
       </div>
 
-      {/* Chat + history */}
-      <div className="flex-1 flex flex-col sm:flex-row gap-3 min-h-[min(70dvh,520px)] sm:min-h-[600px] max-h-[calc(100dvh-8rem)] sm:max-h-[80vh]">
+      {/* Chat + history — fills most of the viewport (widened layout) */}
+      <div className="flex-1 flex flex-col sm:flex-row gap-3 min-h-[min(75dvh,560px)] sm:min-h-[min(78dvh,720px)] max-h-[calc(100dvh-7rem)] sm:max-h-[calc(100dvh-6.5rem)]">
         {/* History sidebar */}
         <aside
-          className={`${historyOpen ? 'flex' : 'hidden'} sm:flex w-full sm:w-56 shrink-0 flex-col bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] overflow-hidden`}
+          className={`${historyOpen ? 'flex' : 'hidden'} sm:flex w-full sm:w-64 shrink-0 flex-col bg-[var(--card-bg)] rounded-2xl border border-[var(--card-border)] overflow-hidden`}
         >
           <div className="p-3 border-b border-[var(--card-border)] flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1">

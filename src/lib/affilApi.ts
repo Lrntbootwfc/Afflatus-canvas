@@ -3,15 +3,27 @@
  * Dev: Vite proxies `/api` → localhost:3000.
  * Prod: set VITE_MAIN_BACKEND_URL (e.g. https://api.example.com) so posts/explore
  * hit the real engine — absolute `/api` on a static host is empty/404.
+ *
+ * IMPORTANT: VITE_* vars are baked in at **build time**. Setting them only in the
+ * host runtime env without rebuilding the frontend will leave the client on `/api`.
  */
 import axios from 'axios';
 
 export function resolveApiBase(): string {
-  const raw = (import.meta.env.VITE_MAIN_BACKEND_URL as string | undefined)?.trim();
-  if (raw) {
-    const base = raw.replace(/\/$/, '');
-    // Allow either origin or origin already ending with /api
-    return base.endsWith('/api') ? base : `${base}/api`;
+  const candidates = [
+    import.meta.env.VITE_MAIN_BACKEND_URL,
+    import.meta.env.VITE_API_URL,
+    import.meta.env.VITE_ENGINE_URL,
+  ];
+  for (const c of candidates) {
+    const raw = typeof c === 'string' ? c.trim() : '';
+    if (!raw) continue;
+    // Allow full path to /api or origin only
+    let base = raw.replace(/\/+$/, '');
+    // If someone pasted the ai-match URL by mistake, strip back to /api
+    base = base.replace(/\/api\/recommendations\/ai-match$/i, '/api');
+    if (base.endsWith('/api')) return base;
+    return `${base}/api`;
   }
   // Same-origin reverse proxy or Vite dev proxy
   return '/api';
@@ -20,7 +32,9 @@ export function resolveApiBase(): string {
 const client = axios.create({
   baseURL: resolveApiBase(),
   headers: { 'Content-Type': 'application/json' },
-  timeout: 30000,
+  timeout: 60000,
+  // Explicit: browser CORS must not require credentials for * origin
+  withCredentials: false,
 });
 
 /** Attach identity for Main Backend (dev: user id; prod: also set Firebase Bearer) */
@@ -54,6 +68,7 @@ export const affilApi = {
     client.post('/profiles/me/portfolio', item).then((r) => r.data),
   removePortfolioItem: (id: string) =>
     client.delete(`/profiles/me/portfolio/${id}`).then((r) => r.data),
+  refreshEmbedding: () => client.post('/profiles/me/embed').then((r) => r.data),
   analyzeCollaborationProfile: (answers: Record<string, string>) =>
     client.post('/profiles/analyze-collaboration', { answers }).then((r) => r.data),
 
@@ -151,6 +166,25 @@ export const affilApi = {
       .post('/assistant/chat', { prompt, userId, currentUserProfile })
       .then((r) => r.data),
 
+  /** Admin: pending join applications (badge + panel). */
+  listPendingApplications: () =>
+    client.get('/applications/pending').then((r) => {
+      const data = r.data;
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data?.applications)) return data.applications;
+      return [];
+    }),
+
+  /** AI Match chat (dashboard). Longer timeout — cold starts + model calls. */
+  aiMatch: (body: {
+    messages: { role: string; content: string }[];
+    sessionLocation?: string;
+    defaultLocation?: string;
+  }) =>
+    client
+      .post('/recommendations/ai-match', body, { timeout: 45000 })
+      .then((r) => r.data),
+
   // Posts
   createPost: (body: { authorId: string; authorName: string; authorRole: string; authorAvatar?: string; caption: string; imageUrl?: string }) =>
     client.post('/posts', body).then((r) => r.data),
@@ -162,10 +196,6 @@ export const affilApi = {
   updatePost: (postId: string, body: { userId: string; caption?: string; imageUrl?: string }) =>
     client.put(`/posts/${postId}`, body).then((r) => r.data),
 
-  /** Uploads a base64 data URL to Cloudinary, returns the hosted https URL. */
-  uploadImage: (dataUrl: string, folder?: string) =>
-    client.post('/uploads/image', { dataUrl, folder }).then((r) => r.data as { url: string }),
-
   /** Admin-side bump of collaborationCount for both parties (owner-only rules block peer write). */
   activateCollaborationCount: (connectionId: string) =>
     client.post('/collaborations/activate-count', { connectionId }).then((r) => r.data),
@@ -173,12 +203,6 @@ export const affilApi = {
   /** Live count from connections (collaborating + completed); backfills users.collaborationCount. */
   getCollaborationCount: (userId: string) =>
     client.get(`/users/${userId}/collaboration-count`).then((r) => r.data as { userId: string; count: number }),
-
-  // Project listings — real, role-filtered "need people for a project" posts
-  getProjectListings: () => client.get('/project-listings').then((r) => r.data),
-  createProjectListing: (body: { title: string; description?: string; requiredRoles: string[]; location?: string }) =>
-    client.post('/project-listings', body).then((r) => r.data),
-  deleteProjectListing: (id: string) => client.delete(`/project-listings/${id}`).then((r) => r.data),
 
   // Progressive collaboration questions (optional)
   getCollaborationQuestionsStatus: () =>
@@ -190,14 +214,12 @@ export const affilApi = {
     answers: Record<string, string | string[]>;
   }) => client.post('/collaboration-questions/submit-set', body).then((r) => r.data),
 
-  // Join applications (server-mediated; enqueues transactional email)
-  submitApplication: (body: { message?: string; name?: string }) =>
-    client.post('/applications', body).then((r) => r.data),
-  listPendingApplications: () =>
-    client.get('/applications/pending').then((r) => r.data),
-  reviewApplication: (userId: string, decision: 'approved' | 'rejected') =>
-    client.post(`/applications/${userId}/review`, { decision }).then((r) => r.data),
+  /** Image upload helper (chat / posts). Callers may fall back to data URLs. */
+  uploadImage: (dataUrl: string, folder?: string) =>
+    client.post('/upload/image', { dataUrl, folder: folder || 'uploads' }).then((r) => r.data),
 };
 
 export default affilApi;
+
+
 
