@@ -116,24 +116,44 @@ export function sanitizeUserFacingError(err: unknown, fallback = 'Something went
 
 
 // ---------------------------------------------------------------------------
-// Shared onSnapshot registry
-// Multiple React components often subscribe to the same query (e.g. HeaderNav
-// badge + Network panel). Two identical onSnapshot targets → intermittent
-// "INTERNAL ASSERTION FAILED / Unexpected state (targetId)".
-// One Firestore listen per key; ref-counted fan-out to local listeners.
+// Shared onSnapshot registry (race-safe)
+// ---------------------------------------------------------------------------
+// Problem fixed: React StrictMode mount→unmount→remount called Firestore
+// unsubscribe then immediately re-subscribed the same query while the SDK still
+// held the target → "Target ID already exists".
+//
+// Solution: ref-counted fan-out + DEFERRED teardown. When the last subscriber
+// leaves, we schedule close on a microtask. If a new subscriber joins before
+// that microtask runs (StrictMode remount), we cancel the close and keep the
+// same underlying listener — zero duplicate targets.
 // ---------------------------------------------------------------------------
 type SharedSnapEntry = {
   refCount: number;
-  unsubFs: Unsubscribe;
+  unsubFs: Unsubscribe | null;
   listeners: Set<(data: unknown) => void>;
   errorListeners: Set<(err: Error) => void>;
   lastData: unknown;
   hasData: boolean;
+  /** Generation token; close only proceeds if generation unchanged */
+  generation: number;
+  closing: boolean;
 };
 
 const __sharedSnaps = new Map<string, SharedSnapEntry>();
 
-function shareOnSnapshot<T>(
+function isBenignListenRace(err: unknown): boolean {
+  const msg = String((err as any)?.message || err || '');
+  return (
+    /target id already exists/i.test(msg) ||
+    /internal assertion/i.test(msg) ||
+    /unexpected state/i.test(msg)
+  );
+}
+
+/**
+ * One Firestore onSnapshot per key. Safe under StrictMode double-mount.
+ */
+export function shareOnSnapshot<T>(
   key: string,
   startListen: (
     onData: (data: T) => void,
@@ -143,47 +163,60 @@ function shareOnSnapshot<T>(
   onError?: (err: Error) => void
 ): Unsubscribe {
   let entry = __sharedSnaps.get(key);
+
+  if (entry && entry.closing) {
+    // Cancel pending teardown — reuse the still-live Firestore listener
+    entry.closing = false;
+  }
+
   if (!entry) {
     const listeners = new Set<(data: unknown) => void>();
     const errorListeners = new Set<(err: Error) => void>();
     listeners.add(onChange as (data: unknown) => void);
     if (onError) errorListeners.add(onError);
 
-    const unsubFs = startListen(
-      (data) => {
-        const e = __sharedSnaps.get(key);
-        if (!e) return;
-        e.lastData = data;
-        e.hasData = true;
-        e.listeners.forEach((fn) => {
-          try {
-            fn(data);
-          } catch (err) {
-            console.warn('[shareOnSnapshot] listener error', err);
-          }
-        });
-      },
-      (err) => {
-        const msg = String((err as any)?.message || err || '');
-        // Swallow known SDK race noise; do not surface as user-facing failures
-        if (
-          /target id already exists/i.test(msg) ||
-          /internal assertion/i.test(msg) ||
-          /unexpected state/i.test(msg)
-        ) {
-          console.warn('[Firestore] shared listen race (ignored):', msg.slice(0, 120));
-          return;
+    const fanoutData = (data: T) => {
+      const e = __sharedSnaps.get(key);
+      if (!e || e.closing) return;
+      e.lastData = data;
+      e.hasData = true;
+      e.listeners.forEach((fn) => {
+        try {
+          fn(data);
+        } catch (err) {
+          console.warn('[shareOnSnapshot] listener error', err);
         }
-        const e = __sharedSnaps.get(key);
-        e?.errorListeners.forEach((fn) => {
-          try {
-            fn(err);
-          } catch {
-            /* ignore */
-          }
-        });
+      });
+    };
+
+    const fanoutErr = (err: Error) => {
+      if (isBenignListenRace(err)) {
+        // Should be rare with deferred teardown; log once-level detail for diagnostics
+        console.info('[shareOnSnapshot] benign listen race on', key, String(err.message || err).slice(0, 100));
+        return;
       }
-    );
+      const e = __sharedSnaps.get(key);
+      e?.errorListeners.forEach((fn) => {
+        try {
+          fn(err);
+        } catch {
+          /* isolate subscriber errors */
+        }
+      });
+    };
+
+    let unsubFs: Unsubscribe;
+    try {
+      unsubFs = startListen(fanoutData, fanoutErr);
+    } catch (err) {
+      if (isBenignListenRace(err)) {
+        // Last resort: report to caller; do not leave a half-registered entry
+        console.error('[shareOnSnapshot] failed to start listen', key, err);
+        onError?.(err as Error);
+        return () => {};
+      }
+      throw err;
+    }
 
     entry = {
       refCount: 1,
@@ -192,6 +225,8 @@ function shareOnSnapshot<T>(
       errorListeners,
       lastData: undefined,
       hasData: false,
+      generation: 1,
+      closing: false,
     };
     __sharedSnaps.set(key, entry);
   } else {
@@ -216,14 +251,29 @@ function shareOnSnapshot<T>(
     e.listeners.delete(onChange as (data: unknown) => void);
     if (onError) e.errorListeners.delete(onError);
     e.refCount -= 1;
-    if (e.refCount <= 0) {
-      __sharedSnaps.delete(key);
-      try {
-        e.unsubFs();
-      } catch (err) {
-        console.warn('[shareOnSnapshot] unsub failed', err);
+    if (e.refCount > 0) return;
+
+    // Defer teardown so StrictMode remount can cancel
+    e.closing = true;
+    const gen = e.generation;
+    queueMicrotask(() => {
+      const cur = __sharedSnaps.get(key);
+      if (!cur) return;
+      if (cur.generation !== gen) return;
+      if (cur.refCount > 0) {
+        cur.closing = false;
+        return;
       }
-    }
+      if (!cur.closing) return;
+      __sharedSnaps.delete(key);
+      const u = cur.unsubFs;
+      cur.unsubFs = null;
+      try {
+        u?.();
+      } catch (err) {
+        console.warn('[shareOnSnapshot] unsub failed', key, err);
+      }
+    });
   };
 }
 
@@ -384,16 +434,37 @@ async function ensureFirestoreOnline(): Promise<void> {
 
 /** getDoc that prefers server; clearer errors when Firestore is unreachable */
 async function getDocOnline(ref: ReturnType<typeof doc>) {
-  await ensureFirestoreOnline();
+  // If browser reports offline, skip server round-trip and use cache/local
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return await getDoc(ref);
+  }
+  try {
+    await ensureFirestoreOnline();
+  } catch {
+    /* enableNetwork may fail offline — continue to read paths */
+  }
   try {
     return await getDocFromServer(ref);
   } catch (err: any) {
     const msg = String(err?.message || err || '');
-    // Fall back to cache/default getDoc if server path fails for non-offline reasons
-    if (!msg.includes('offline') && err?.code !== 'unavailable') {
+    const offline =
+      err?.code === 'unavailable' ||
+      /offline/i.test(msg) ||
+      /client is offline/i.test(msg) ||
+      /Failed to get document because the client is offline/i.test(msg);
+    // Always try default getDoc (cache) before giving up
+    try {
       return await getDoc(ref);
+    } catch (err2: any) {
+      if (offline) {
+        // Re-throw a single clear offline error (callers may fall back)
+        const e = new Error('Firestore client is offline');
+        (e as any).code = 'unavailable';
+        (e as any).cause = err2;
+        throw e;
+      }
+      throw err2;
     }
-    throw err;
   }
 }
 
@@ -769,11 +840,14 @@ export async function getProfileFromFirestore(userId: string): Promise<CreatorPr
     try {
       snap = await getDocOnline(userRef);
     } catch (err: any) {
-      console.warn('[Firestore] getDocOnline profile failed, trying cache:', err?.message || err);
+      const msg = String(err?.message || err || '');
+      const offline = /offline/i.test(msg) || err?.code === 'unavailable';
+      if (!offline) {
+        console.warn('[Firestore] profile read failed:', msg.slice(0, 120));
+      }
       try {
         snap = await getDoc(userRef);
-      } catch (err2: any) {
-        console.warn('[Firestore] getDoc profile failed:', err2?.message || err2);
+      } catch {
         snap = null;
       }
     }

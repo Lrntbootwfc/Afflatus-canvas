@@ -109,7 +109,7 @@
   --tag-border: #E0D5C6;
   --accent-amber: #B8893F;
   --btn-on-accent: #14100C;
---accent-amber-hover: #A67835;
+  --accent-amber-hover: #A67835;
   --accent-secondary: #C9A05C;
   --accent-secondary-hover: #D4B06E;
   --accent-secondary-subtle: rgba(184, 137, 63, 0.16);
@@ -1105,4 +1105,121 @@ html.dark .card-obsidian {
    ------------------------------------------------------------------------- */
 .on-accent-fg {
   color: var(--btn-on-accent, #14100C) !important;
+}
+
+
+/* ===== AFFLATUS BUTTON CONTRAST (global) =====
+   Dark surface → light text; light surface → dark text.
+   Use .btn-primary / .btn-secondary / .btn-accent on actions. */
+:root {
+  --btn-primary-bg: #111111;
+  --btn-primary-fg: #ffffff;
+  --btn-secondary-bg: #ffffff;
+  --btn-secondary-fg: #111111;
+  --btn-secondary-border: rgba(0, 0, 0, 0.2);
+  --btn-disabled-bg: #9ca3af;
+  --btn-disabled-fg: #f3f4f6;
+}
+
+/* Dark themes: invert primary/secondary for readable CTAs on dark canvas */
+[data-mode="dark"],
+[data-theme="dark"],
+[data-theme="luxury-atelier-dark"],
+[data-theme="editorial-dark"],
+[data-theme="pink-plum-dark"],
+[data-theme="midnight-dark"],
+[data-theme="midnight"],
+[data-theme="emerald-dark"],
+[data-theme="emerald"],
+[data-theme="monochrome-dark"],
+[data-theme="monochrome"],
+[data-theme="plum-cream-dark"],
+[data-theme="plum-cream"],
+[data-theme="deep-olive-mauve-dark"],
+[data-theme="deep-olive-mauve"],
+[data-theme="sage-plum-dark"],
+[data-theme="sage-plum"],
+[data-theme="jade-mist-dark"],
+[data-theme="maroon-forest-dark"],
+[data-theme="burgundy-lavender-dark"],
+[data-theme="burgundy-lavender"],
+[data-palette][data-mode="dark"] {
+  --btn-primary-bg: #f5f5f5;
+  --btn-primary-fg: #111111;
+  --btn-secondary-bg: #1a1a1a;
+  --btn-secondary-fg: #f5f5f5;
+  --btn-secondary-border: rgba(255, 255, 255, 0.25);
+  --btn-disabled-bg: #4b5563;
+  --btn-disabled-fg: #d1d5db;
+}
+
+.btn-primary {
+  background-color: var(--btn-primary-bg) !important;
+  color: var(--btn-primary-fg) !important;
+  border: 1px solid var(--btn-primary-bg) !important;
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.btn-primary:disabled,
+.btn-primary[disabled] {
+  background-color: var(--btn-disabled-bg) !important;
+  color: var(--btn-disabled-fg) !important;
+  border-color: var(--btn-disabled-bg) !important;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background-color: var(--btn-secondary-bg) !important;
+  color: var(--btn-secondary-fg) !important;
+  border: 1px solid var(--btn-secondary-border) !important;
+}
+.btn-secondary:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+.btn-secondary:disabled,
+.btn-secondary[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Accent CTA — fill is --accent-amber; ink is --btn-on-accent (set per palette) */
+.btn-accent,
+.amber-pill-btn,
+.theme-pill-btn {
+  background-color: var(--accent-amber) !important;
+  color: var(--btn-on-accent, #14100C) !important;
+  border: 1px solid var(--accent-amber) !important;
+  font-weight: 700;
+}
+.btn-accent:hover:not(:disabled),
+.amber-pill-btn:hover:not(:disabled),
+.theme-pill-btn:hover:not(:disabled) {
+  background-color: var(--accent-amber-hover) !important;
+  border-color: var(--accent-amber-hover) !important;
+}
+.btn-accent svg,
+.amber-pill-btn svg,
+.theme-pill-btn svg {
+  color: inherit !important;
+}
+
+/* Hard fallbacks when only bg utilities are used without matching text color */
+button.bg-black,
+a.bg-black,
+[class~="bg-black"] {
+  color: #ffffff !important;
+}
+button.bg-white,
+a.bg-white,
+[class~="bg-white"] {
+  color: #111111 !important;
+}
+
+/* Ensure nav active chips keep intended on-accent pairing */
+.nav-item-active,
+[class*="nav-item-active"] {
+  background-color: var(--nav-item-active-bg);
+  color: var(--nav-item-active-text) !important;
 }
