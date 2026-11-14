@@ -59,7 +59,6 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
 }) => {
   // Chat State
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [productionDraft, setProductionDraft] = useState<any>(null);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -74,16 +73,14 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
   const [incomingConnections, setIncomingConnections] = useState<ConnectionRequest[]>([]);
   const [isRespondingId, setIsRespondingId] = useState<string | null>(null);
   const [showRequestsModal, setShowRequestsModal] = useState<boolean>(false);
-  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
   const [peerProfiles, setPeerProfiles] = useState<Record<string, CreatorProfile>>({});
 
   // Proposal State
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    // Scroll to bottom when messages change — nothing to scroll to on an empty chat
-    if (messages.length === 0 && !isTyping) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // Scroll to bottom when messages change
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
   const refreshConversationList = async () => {
@@ -142,7 +139,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
     const full = await getAiMatchConversation(currentUser.id, id);
     if (!full) return;
     setConversationId(full.id);
-    setSessionLocation(full.sessionLocation || null);
+    setSessionLocation((full as any).sessionLocation || null);
     setMessages(
       (full.messages || []).map((m) => ({
         role: m.role,
@@ -154,21 +151,16 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
     setHistoryOpen(false);
   };
 
-  const handleRenameConversation = (id: string, currentTitle: string) => {
-    setRenameTarget({ id, title: currentTitle || '' });
-  };
-
-  const confirmRenameConversation = async () => {
-    if (!renameTarget) return;
-    const title = renameTarget.title.trim();
+  const handleRenameConversation = async (id: string, currentTitle: string) => {
+    const next = window.prompt('Rename conversation', currentTitle || '');
+    if (next === null) return;
+    const title = next.trim();
     if (!title) return;
     try {
-      await renameAiMatchConversation(currentUser.id, renameTarget.id, title);
+      await renameAiMatchConversation(currentUser.id, id, title);
       await refreshConversationList();
     } catch (e: any) {
       showToast(e?.message || 'Could not rename');
-    } finally {
-      setRenameTarget(null);
     }
   };
 
@@ -304,24 +296,29 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
           messages: chatHistory,
           sessionLocation: sessionLocation || undefined,
           defaultLocation: profileLoc || undefined,
-          productionDraft: productionDraft || undefined,
         }),
       });
 
-      const data = await res.json();
-
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to get recommendations');
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          res.ok
+            ? 'Invalid response from AI Match'
+            : `AI Match request failed (${res.status}). Check that the backend is reachable and VITE_MAIN_BACKEND_URL is set in production.`
+        );
       }
 
-      if (data.productionDraft) {
-        setProductionDraft(data.productionDraft);
+      if (!res.ok || !data?.success) {
+        const serverMsg =
+          (typeof data?.message === 'string' && data.message) ||
+          (typeof data?.error === 'string' && data.error) ||
+          `AI Match failed (${res.status || 'network'})`;
+        throw new Error(serverMsg);
       }
 
-      const hasCandidates = (Array.isArray(data.candidates) && data.candidates.length > 0)
-        || (Array.isArray(data.results) && data.results.length > 0)
-        || data.showCards === true;
-      if ((data.outOfScope || data.conversational) && !hasCandidates) {
+      if (data.outOfScope || data.conversational) {
         const withAssistant: ChatMessage[] = [
           ...newMessages,
           {
@@ -341,7 +338,7 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
         return;
       }
 
-      const creatorsFound = (data.candidates || data.results || []).map((c: any) => {
+      const creatorsFound = (data.candidates || []).map((c: any) => {
         const raw = typeof c.score === 'number' ? c.score : 0;
         const relevanceScore = raw > 1 ? raw / 100 : raw;
         const profile = c.profile || {};
@@ -404,13 +401,24 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
       }
 
     } catch (err: any) {
-      console.error(err);
-      setMessages(prev => [
+      console.error('[AI Match]', err);
+      const detail =
+        typeof err?.message === 'string' && err.message.trim()
+          ? err.message.trim()
+          : '';
+      const isNetwork =
+        /failed to fetch|network|cors|load failed|unreachable/i.test(detail) ||
+        err?.name === 'TypeError';
+      setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: "Sorry, I encountered an error trying to process that request. Please try again."
-        }
+          content: isNetwork
+            ? 'Could not reach the AI Match service. If this is production, confirm VITE_MAIN_BACKEND_URL points at the engine API and that CORS allows this origin.'
+            : detail && detail.length < 280
+              ? `Sorry — ${detail}`
+              : 'Sorry, I encountered an error trying to process that request. Please try again.',
+        },
       ]);
     } finally {
       setIsTyping(false);
@@ -418,11 +426,30 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
   };
 
   return (
-    <div className="w-full min-h-[100dvh] py-4 sm:py-8 px-3 sm:px-6 lg:px-8 max-w-[1600px] mx-auto space-y-4 sm:space-y-8 animate-in fade-in duration-200 flex flex-col pb-[max(1rem,env(safe-area-inset-bottom))]">
+    <div className="w-full min-h-[100dvh] py-4 sm:py-8 px-3 sm:px-6 lg:px-8 max-w-5xl mx-auto space-y-4 sm:space-y-8 animate-in fade-in duration-200 flex flex-col pb-[max(1rem,env(safe-area-inset-bottom))]">
       
-      {/* Top Bar: Connection Requests only */}
-      {incomingConnections.length > 0 && (
-        <div className="flex items-center justify-end gap-4 pb-4 border-b border-[var(--card-border)]">
+      {/* Top Bar: Profile Actions & Connections */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-4 border-b border-[var(--card-border)]">
+        <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
+          <div className="bg-[var(--card-inner-bg)] px-4 py-2 rounded-2xl border border-[var(--card-inner-border)] flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-[color-mix(in_srgb,var(--accent-amber)_20%,transparent)] flex items-center justify-center">
+              <Sparkles className="w-4 h-4 text-[var(--accent-amber)]" />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Active Workspace</p>
+              <p className="text-xs font-semibold text-[var(--text-primary)]">Afflatus AI Match</p>
+            </div>
+          </div>
+
+          <button
+            onClick={onEditProfile}
+            className="text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+          >
+            Edit Profile
+          </button>
+        </div>
+
+        {incomingConnections.length > 0 && (
           <button
             onClick={() => setShowRequestsModal(true)}
             className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 text-xs font-bold shrink-0 hover:bg-emerald-500/20 transition-colors cursor-pointer"
@@ -430,8 +457,8 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
             <UserCheck className="w-4 h-4" />
             <span>{incomingConnections.length} New Request{incomingConnections.length !== 1 ? 's' : ''}</span>
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Chat + history */}
       <div className="flex-1 flex flex-col sm:flex-row gap-3 min-h-[min(70dvh,520px)] sm:min-h-[600px] max-h-[calc(100dvh-8rem)] sm:max-h-[80vh]">
@@ -699,47 +726,14 @@ export const MainDashboardScreen: React.FC<MainDashboardScreenProps> = ({
               <Send className="w-4 h-4" />
             </button>
           </form>
-        </div>
-      </div>
-      </div>
-
-      {/* Rename Conversation Card */}
-      {renameTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-          <div className="card-warm-white w-full max-w-sm rounded-3xl border border-[var(--card-border)] shadow-2xl p-5 space-y-4">
-            <h3 className="font-editorial text-lg font-bold text-[var(--text-primary)]">Rename Conversation</h3>
-            <input
-              type="text"
-              autoFocus
-              value={renameTarget.title}
-              onChange={(e) => setRenameTarget({ ...renameTarget, title: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') confirmRenameConversation();
-                if (e.key === 'Escape') setRenameTarget(null);
-              }}
-              placeholder="Conversation title"
-              className="w-full bg-[var(--input-bg)] border border-[var(--input-border)] rounded-2xl px-4 py-2.5 text-sm text-[var(--input-text)] focus:outline-none focus:border-[var(--accent-amber)]"
-            />
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setRenameTarget(null)}
-                className="px-4 py-2 rounded-full text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmRenameConversation}
-                disabled={!renameTarget.title.trim()}
-                className="px-5 py-2 rounded-full text-xs font-bold bg-[var(--accent-amber)] text-[var(--btn-on-accent,#14100C)] shadow-md hover:opacity-90 disabled:opacity-50 cursor-pointer"
-              >
-                Save
-              </button>
-            </div>
+          <div className="text-center mt-2">
+            <span className="text-[10px] text-[var(--text-muted)] font-mono">
+              AI Match interprets your needs deterministically. Results are strictly filtered and scored.
+            </span>
           </div>
         </div>
-      )}
+      </div>
+      </div>
 
       {/* Global Toast */}
       {toastMessage && (

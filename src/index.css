@@ -1223,3 +1223,60 @@ a.bg-white,
   background-color: var(--nav-item-active-bg);
   color: var(--nav-item-active-text) !important;
 }
+
+/* ===== GLOBAL BUTTON CONTRAST HARDENING (2026-11) =====
+   Catch common ad-hoc patterns that bypass .btn-* semantic classes.
+   Do not invert randomly — pair light fills with dark ink and vice versa. */
+
+/* Disabled buttons: always muted but readable */
+button:disabled,
+button[disabled],
+[role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+/* Accent / amber fills without explicit on-accent text */
+button[class*="bg-[var(--accent"],
+a[class*="bg-[var(--accent"],
+button[class*="bg-amber"],
+a[class*="bg-amber"] {
+  color: var(--btn-on-accent, #14100C) !important;
+}
+button[class*="bg-[var(--accent"] svg,
+a[class*="bg-[var(--accent"] svg {
+  color: inherit !important;
+}
+
+/* Nav active chips */
+button.bg-\[var\(--nav-item-active-bg\)\],
+[class*="nav-item-active"] {
+  color: var(--nav-item-active-text) !important;
+}
+
+/* Message bubble own-side already uses --btn-on-accent in Messenger */
+
+/* Secondary accent pill */
+.theme-pill-secondary {
+  color: #ffffff !important;
+}
+.theme-pill-secondary svg {
+  color: inherit !important;
+}
+
+/* Focus-visible rings for accessibility without changing fill contrast */
+button:focus-visible,
+[role="button"]:focus-visible,
+a.btn-primary:focus-visible,
+a.btn-secondary:focus-visible,
+a.btn-accent:focus-visible {
+  outline: 2px solid var(--accent-amber);
+  outline-offset: 2px;
+}
+
+/* Ensure opacity-disabled states keep fg readable (not pure transparent) */
+button:disabled.btn-primary,
+button:disabled.btn-accent,
+button:disabled.amber-pill-btn {
+  opacity: 0.65;
+  color: var(--btn-disabled-fg, #f3f4f6) !important;
+}

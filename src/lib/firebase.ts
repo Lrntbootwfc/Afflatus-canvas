@@ -116,16 +116,21 @@ export function sanitizeUserFacingError(err: unknown, fallback = 'Something went
 
 
 // ---------------------------------------------------------------------------
-// Shared onSnapshot registry (race-safe)
+// Shared onSnapshot registry (race-safe, hardened)
 // ---------------------------------------------------------------------------
-// Problem fixed: React StrictMode mount→unmount→remount called Firestore
-// unsubscribe then immediately re-subscribed the same query while the SDK still
-// held the target → "Target ID already exists".
+// Root cause of "Target ID already exists":
+// React StrictMode (and fast nav) does mount→unmount→remount. The first unmount
+// called Firestore unsubscribe(); the remount immediately called onSnapshot()
+// for the same query while the WebChannel still held the target id.
 //
-// Solution: ref-counted fan-out + DEFERRED teardown. When the last subscriber
-// leaves, we schedule close on a microtask. If a new subscriber joins before
-// that microtask runs (StrictMode remount), we cancel the close and keep the
-// same underlying listener — zero duplicate targets.
+// Fix:
+// 1. Ref-counted fan-out: one Firestore listener per stable key.
+// 2. Deferred teardown with cancellable timer (not microtask — SDK needs ~50–150ms
+//    to fully release the target after unsub).
+// 3. If a new subscriber arrives while closing, cancel teardown and keep the
+//    same underlying listener (generation unchanged).
+// 4. In-flight start lock so concurrent first-subscribers for a key cannot
+//    both call startListen.
 // ---------------------------------------------------------------------------
 type SharedSnapEntry = {
   refCount: number;
@@ -137,9 +142,15 @@ type SharedSnapEntry = {
   /** Generation token; close only proceeds if generation unchanged */
   generation: number;
   closing: boolean;
+  closeTimer: ReturnType<typeof setTimeout> | null;
 };
 
 const __sharedSnaps = new Map<string, SharedSnapEntry>();
+/** Keys currently executing startListen — prevents concurrent first registration */
+const __startingKeys = new Set<string>();
+
+/** How long to wait after last consumer leaves before calling Firestore unsub */
+const TEARDOWN_DELAY_MS = 120;
 
 function isBenignListenRace(err: unknown): boolean {
   const msg = String((err as any)?.message || err || '');
@@ -150,8 +161,17 @@ function isBenignListenRace(err: unknown): boolean {
   );
 }
 
+function cancelPendingClose(entry: SharedSnapEntry): void {
+  if (entry.closeTimer != null) {
+    clearTimeout(entry.closeTimer);
+    entry.closeTimer = null;
+  }
+  entry.closing = false;
+}
+
 /**
- * One Firestore onSnapshot per key. Safe under StrictMode double-mount.
+ * One Firestore onSnapshot per key. Safe under StrictMode double-mount and
+ * rapid navigation between Messenger sections.
  */
 export function shareOnSnapshot<T>(
   key: string,
@@ -164,12 +184,39 @@ export function shareOnSnapshot<T>(
 ): Unsubscribe {
   let entry = __sharedSnaps.get(key);
 
-  if (entry && entry.closing) {
-    // Cancel pending teardown — reuse the still-live Firestore listener
-    entry.closing = false;
-  }
+  if (entry) {
+    // Cancel any pending teardown — reuse the still-live Firestore listener
+    cancelPendingClose(entry);
+    entry.refCount += 1;
+    entry.listeners.add(onChange as (data: unknown) => void);
+    if (onError) entry.errorListeners.add(onError);
+    if (entry.hasData) {
+      try {
+        onChange(entry.lastData as T);
+      } catch {
+        /* isolate subscriber errors */
+      }
+    }
+  } else {
+    // First consumer for this key — create the shared entry and start listen once.
+    // Guard against concurrent first-subscribers (e.g. two components mounting in same tick).
+    if (__startingKeys.has(key)) {
+      // Another start is in flight; spin on microtasks until entry exists or give up.
+      // Practically: the first starter will set the entry synchronously after startListen returns.
+      // We register as a late joiner by waiting one microtask.
+      let lateCleaned = false;
+      let lateUnsub: Unsubscribe | null = null;
+      queueMicrotask(() => {
+        if (lateCleaned) return;
+        lateUnsub = shareOnSnapshot(key, startListen, onChange, onError);
+      });
+      return () => {
+        lateCleaned = true;
+        lateUnsub?.();
+      };
+    }
 
-  if (!entry) {
+    __startingKeys.add(key);
     const listeners = new Set<(data: unknown) => void>();
     const errorListeners = new Set<(err: Error) => void>();
     listeners.add(onChange as (data: unknown) => void);
@@ -177,7 +224,7 @@ export function shareOnSnapshot<T>(
 
     const fanoutData = (data: T) => {
       const e = __sharedSnaps.get(key);
-      if (!e || e.closing) return;
+      if (!e) return;
       e.lastData = data;
       e.hasData = true;
       e.listeners.forEach((fn) => {
@@ -191,8 +238,12 @@ export function shareOnSnapshot<T>(
 
     const fanoutErr = (err: Error) => {
       if (isBenignListenRace(err)) {
-        // Should be rare with deferred teardown; log once-level detail for diagnostics
-        console.info('[shareOnSnapshot] benign listen race on', key, String(err.message || err).slice(0, 100));
+        // Should be rare with deferred teardown; keep diagnostics without treating as fatal
+        console.info(
+          '[shareOnSnapshot] listen race (suppressed) on',
+          key,
+          String(err.message || err).slice(0, 100)
+        );
         return;
       }
       const e = __sharedSnaps.get(key);
@@ -200,22 +251,24 @@ export function shareOnSnapshot<T>(
         try {
           fn(err);
         } catch {
-          /* isolate subscriber errors */
+          /* isolate */
         }
       });
     };
 
-    let unsubFs: Unsubscribe;
+    let unsubFs: Unsubscribe = () => {};
     try {
       unsubFs = startListen(fanoutData, fanoutErr);
     } catch (err) {
+      __startingKeys.delete(key);
       if (isBenignListenRace(err)) {
-        // Last resort: report to caller; do not leave a half-registered entry
         console.error('[shareOnSnapshot] failed to start listen', key, err);
         onError?.(err as Error);
         return () => {};
       }
       throw err;
+    } finally {
+      __startingKeys.delete(key);
     }
 
     entry = {
@@ -227,19 +280,9 @@ export function shareOnSnapshot<T>(
       hasData: false,
       generation: 1,
       closing: false,
+      closeTimer: null,
     };
     __sharedSnaps.set(key, entry);
-  } else {
-    entry.refCount += 1;
-    entry.listeners.add(onChange as (data: unknown) => void);
-    if (onError) entry.errorListeners.add(onError);
-    if (entry.hasData) {
-      try {
-        onChange(entry.lastData as T);
-      } catch {
-        /* ignore */
-      }
-    }
   }
 
   let cleaned = false;
@@ -253,27 +296,30 @@ export function shareOnSnapshot<T>(
     e.refCount -= 1;
     if (e.refCount > 0) return;
 
-    // Defer teardown so StrictMode remount can cancel
+    // Last consumer left — schedule deferred teardown so StrictMode remount
+    // (or fast re-subscribe) can cancel and keep the same target.
+    cancelPendingClose(e);
     e.closing = true;
     const gen = e.generation;
-    queueMicrotask(() => {
+    e.closeTimer = setTimeout(() => {
       const cur = __sharedSnaps.get(key);
       if (!cur) return;
       if (cur.generation !== gen) return;
       if (cur.refCount > 0) {
-        cur.closing = false;
+        cancelPendingClose(cur);
         return;
       }
       if (!cur.closing) return;
       __sharedSnaps.delete(key);
       const u = cur.unsubFs;
       cur.unsubFs = null;
+      cur.closeTimer = null;
       try {
         u?.();
       } catch (err) {
         console.warn('[shareOnSnapshot] unsub failed', key, err);
       }
-    });
+    }, TEARDOWN_DELAY_MS);
   };
 }
 

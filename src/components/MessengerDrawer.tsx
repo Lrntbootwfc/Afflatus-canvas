@@ -1,6 +1,6 @@
 /**
- * WhatsApp-style messenger: 1:1 chats, groups/communities, media, mobile-first.
- * Place at: src/components/messaging/MessengerDrawer.tsx
+ * WhatsApp-inspired Messenger with persistent Chats / Groups / Communities navigation.
+ * Navigation remains visible when a conversation is open (desktop split; mobile back + tabs).
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -14,12 +14,13 @@ import {
   Plus,
   Image as ImageIcon,
   FileText,
-  Mic,
+  Search,
+  Hash,
+  User,
 } from 'lucide-react';
 import type { CreatorProfile } from '../../types';
 import {
   getProfileFromFirestore,
-  toggleCollaborationStatus,
   sendMessage,
   subscribeToMessages,
   markMessagesRead,
@@ -49,7 +50,56 @@ interface MessengerDrawerProps {
 }
 
 type PeerMap = Record<string, CreatorProfile | null>;
-type TabKey = 'chats' | 'groups';
+/** Primary sections — always independently accessible */
+type SectionKey = 'chats' | 'groups' | 'communities';
+
+type UnifiedItem =
+  | {
+      kind: 'dm';
+      id: string;
+      name: string;
+      preview: string;
+      at: string;
+      unread: number;
+      peerId: string;
+      peer: CreatorProfile | null;
+      connection: ConnectionRequest;
+    }
+  | {
+      kind: 'group' | 'community';
+      id: string;
+      name: string;
+      preview: string;
+      at: string;
+      unread: number;
+      group: ChatGroup;
+      memberCount: number;
+    };
+
+function formatTime(iso?: string | null): string {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const d = new Date(t);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (
+    d.getFullYear() === yesterday.getFullYear() &&
+    d.getMonth() === yesterday.getMonth() &&
+    d.getDate() === yesterday.getDate()
+  ) {
+    return 'Yesterday';
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 
 export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
   isOpen,
@@ -58,7 +108,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
   initialConnectionId,
   onNavigateToProfile,
 }) => {
-  const [tab, setTab] = useState<TabKey>('chats');
+  const [section, setSection] = useState<SectionKey>('chats');
   const [connections, setConnections] = useState<ConnectionRequest[]>([]);
   const [groups, setGroups] = useState<ChatGroup[]>([]);
   const [loadingList, setLoadingList] = useState(true);
@@ -74,18 +124,31 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
   const [groupName, setGroupName] = useState('');
   const [groupKind, setGroupKind] = useState<'group' | 'community'>('group');
   const [groupMembers, setGroupMembers] = useState<string[]>([]);
+  const [search, setSearch] = useState('');
+  const [filterUnread, setFilterUnread] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const myUid = auth.currentUser?.uid || currentUser.id;
-  const authedUid = auth.currentUser?.uid || null;
 
   const accepted = useMemo(
     () =>
-      connections.filter(
+      (connections || []).filter(
         (c) =>
-          c.status === 'accepted' || c.status === 'collaborating' || c.status === 'completed'
+          c.status === 'accepted' ||
+          c.status === 'collaborating' ||
+          c.status === 'completed' ||
+          c.kind === 'message_request'
       ),
     [connections]
+  );
+
+  const pureGroups = useMemo(
+    () => (groups || []).filter((g) => (g.kind || 'group') !== 'community'),
+    [groups]
+  );
+  const communities = useMemo(
+    () => (groups || []).filter((g) => g.kind === 'community'),
+    [groups]
   );
 
   const selected = accepted.find((c) => c.id === selectedId) || null;
@@ -95,19 +158,14 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
       ? selected.recipientId
       : selected.senderId
     : null;
-  const peer = peerId ? peers[peerId] : null;
-
+  const peer = peerId ? peers[peerId] ?? null : null;
   const inThread = !!(selectedId || selectedGroupId);
 
+  // List subscriptions — stay alive while drawer is open (do not drop on section switch)
   useEffect(() => {
     if (!isOpen) return;
     setLoadingList(true);
     setError(null);
-    if (!initialConnectionId) {
-      setSelectedId(null);
-      setSelectedGroupId(null);
-      setMessages([]);
-    }
     const unsub = subscribeToUserConnections(
       currentUser.id,
       (list) => {
@@ -119,47 +177,33 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
         setLoadingList(false);
       }
     );
-    if (!authedUid) {
-      setGroups([]);
-      return () => {
-        unsub?.();
-      };
-    }
     const unsubG = subscribeToMyGroups(
-      authedUid,
+      myUid,
       (list) => setGroups(list || []),
-      (err) => {
-        console.warn('[Messenger] groups', err);
-        const msg = String((err as any)?.message || err || '');
-        if (/permission|insufficient/i.test(msg)) {
-          setError(
-            'Groups still blocked. Confirm Firebase project matches this app and re-publish firestore.rules (groups: allow read if request.auth != null).'
-          );
-        }
-      }
+      (err) => console.warn('[Messenger] groups', err)
     );
     return () => {
       unsub?.();
       unsubG?.();
     };
-  }, [isOpen, currentUser.id, myUid, authedUid, initialConnectionId]);
+  }, [isOpen, currentUser.id, myUid]);
 
   useEffect(() => {
     if (initialConnectionId) {
       setSelectedId(initialConnectionId);
       setSelectedGroupId(null);
-      setTab('chats');
+      setSection('chats');
     }
   }, [initialConnectionId]);
 
-  // Load peer profiles
+  // Peer profiles for DMs
   useEffect(() => {
     const ids = new Set<string>();
     accepted.forEach((c) => {
       ids.add(c.senderId === currentUser.id ? c.recipientId : c.senderId);
     });
     ids.forEach(async (id) => {
-      if (peers[id]) return;
+      if (peers[id] !== undefined) return;
       try {
         const p = await getProfileFromFirestore(id);
         setPeers((prev) => ({ ...prev, [id]: p }));
@@ -170,7 +214,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accepted, currentUser.id]);
 
-  // Subscribe 1:1 messages
+  // 1:1 messages
   useEffect(() => {
     if (!selectedId) return;
     setMessages([]);
@@ -185,7 +229,7 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
     return () => unsub?.();
   }, [selectedId, peerId, myUid]);
 
-  // Subscribe group messages
+  // Group / community messages
   useEffect(() => {
     if (!selectedGroupId) return;
     setMessages([]);
@@ -200,6 +244,80 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, sending]);
+
+  const buildUnifiedChats = (): UnifiedItem[] => {
+    const items: UnifiedItem[] = [];
+    accepted.forEach((c) => {
+      const pid = c.senderId === currentUser.id ? c.recipientId : c.senderId;
+      const p = peers[pid] ?? null;
+      items.push({
+        kind: 'dm',
+        id: c.id,
+        name: p?.name || 'Chat',
+        preview: String((c as any).lastMessageText || ''),
+        at: String((c as any).lastMessageAt || c.updatedAt || c.createdAt || ''),
+        unread: Number((c as any).unreadCounts?.[myUid] || 0),
+        peerId: pid,
+        peer: p,
+        connection: c,
+      });
+    });
+    // Groups + communities also appear in unified Chats (WhatsApp-style)
+    groups.forEach((g) => {
+      const k = g.kind === 'community' ? 'community' : 'group';
+      items.push({
+        kind: k,
+        id: g.id,
+        name: g.name,
+        preview: String(g.lastMessageText || g.description || ''),
+        at: String(g.lastMessageAt || g.updatedAt || g.createdAt || ''),
+        unread: 0,
+        group: g,
+        memberCount: Array.isArray(g.memberIds) ? g.memberIds.length : 0,
+      });
+    });
+    items.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    return items;
+  };
+
+  const listItems = useMemo(() => {
+    let items: UnifiedItem[] = [];
+    if (section === 'chats') items = buildUnifiedChats();
+    else if (section === 'groups') {
+      items = pureGroups.map((g) => ({
+        kind: 'group' as const,
+        id: g.id,
+        name: g.name,
+        preview: String(g.lastMessageText || g.description || ''),
+        at: String(g.lastMessageAt || g.updatedAt || g.createdAt || ''),
+        unread: 0,
+        group: g,
+        memberCount: Array.isArray(g.memberIds) ? g.memberIds.length : 0,
+      }));
+    } else {
+      items = communities.map((g) => ({
+        kind: 'community' as const,
+        id: g.id,
+        name: g.name,
+        preview: String(g.description || g.lastMessageText || ''),
+        at: String(g.lastMessageAt || g.updatedAt || g.createdAt || ''),
+        unread: 0,
+        group: g,
+        memberCount: Array.isArray(g.memberIds) ? g.memberIds.length : 0,
+      }));
+    }
+    const q = search.trim().toLowerCase();
+    if (q) {
+      items = items.filter(
+        (i) =>
+          i.name.toLowerCase().includes(q) ||
+          i.preview.toLowerCase().includes(q)
+      );
+    }
+    if (filterUnread) items = items.filter((i) => i.unread > 0);
+    return items;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, accepted, groups, pureGroups, communities, peers, search, filterUnread, myUid, currentUser.id]);
 
   const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -259,19 +377,16 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
     if (!groupName.trim()) return;
     setSending(true);
     try {
-      if (!auth.currentUser?.uid) {
-        throw new Error('Sign in required to create a group');
-      }
       const g = await createGroup({
         name: groupName.trim(),
         kind: groupKind,
         memberIds: groupMembers,
-        createdBy: auth.currentUser.uid,
+        createdBy: myUid,
       });
       setShowNewGroup(false);
       setGroupName('');
       setGroupMembers([]);
-      setTab('groups');
+      setSection(g.kind === 'community' ? 'communities' : 'groups');
       setSelectedGroupId(g.id);
       setSelectedId(null);
     } catch (err: any) {
@@ -281,6 +396,25 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
     }
   };
 
+  const openDm = (id: string) => {
+    setSelectedId(id);
+    setSelectedGroupId(null);
+  };
+  const openGroup = (id: string) => {
+    setSelectedGroupId(id);
+    setSelectedId(null);
+  };
+  const closeThread = () => {
+    setSelectedId(null);
+    setSelectedGroupId(null);
+    setMessages([]);
+  };
+
+  const switchSection = (s: SectionKey) => {
+    setSection(s);
+    // Keep current conversation open — do not force-close (critical requirement)
+  };
+
   if (!isOpen) return null;
 
   const renderMedia = (m?: MessageMedia | null) => {
@@ -288,7 +422,11 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
     if (m.kind === 'image') {
       return (
         <a href={m.url} target="_blank" rel="noreferrer" className="block mt-1">
-          <img src={m.url} alt={m.fileName || 'image'} className="max-w-[220px] sm:max-w-[280px] rounded-lg max-h-56 object-cover" />
+          <img
+            src={m.url}
+            alt={m.fileName || 'image'}
+            className="max-w-[220px] sm:max-w-[280px] rounded-lg max-h-56 object-cover"
+          />
         </a>
       );
     }
@@ -314,77 +452,355 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
     );
   };
 
-  return (
-    <div className="fixed inset-0 z-[80] flex justify-end">
-      <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close" onClick={onClose} />
+  const SectionTabs = (
+    <div className="flex border-b border-[var(--card-border)] shrink-0" role="tablist">
+      {(
+        [
+          { key: 'chats' as const, label: 'Chats', icon: MessageSquare },
+          { key: 'groups' as const, label: 'Groups', icon: Users },
+          { key: 'communities' as const, label: 'Communities', icon: Hash },
+        ] as const
+      ).map(({ key, label, icon: Icon }) => (
+        <button
+          key={key}
+          type="button"
+          role="tab"
+          aria-selected={section === key}
+          onClick={() => switchSection(key)}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] sm:text-xs font-bold uppercase tracking-wide transition-colors ${
+            section === key
+              ? 'text-[var(--accent-amber)] border-b-2 border-[var(--accent-amber)]'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+          }`}
+        >
+          <Icon className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{label}</span>
+        </button>
+      ))}
+    </div>
+  );
 
-      {/* Panel: full-screen on mobile, drawer on md+ */}
-      <div className="relative w-full h-full md:max-w-md lg:max-w-lg bg-[var(--card-bg)] border-l border-[var(--card-border)] shadow-2xl flex flex-col">
-        {/* Top bar */}
-        <div className="flex items-center justify-between px-3 sm:px-4 py-3 border-b border-[var(--card-border)] shrink-0 gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            {inThread && (
+  const ListPane = (
+    <div className="flex flex-col min-h-0 h-full">
+      {SectionTabs}
+      <div className="px-2 py-2 flex gap-2 items-center border-b border-[var(--card-border)] shrink-0">
+        <div className="flex-1 flex items-center gap-2 rounded-lg bg-[var(--input-bg)] border border-[var(--input-border)] px-2.5 py-1.5">
+          <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search conversations"
+            className="w-full bg-transparent text-xs text-[var(--input-text)] outline-none placeholder:text-[var(--text-muted)]"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => setFilterUnread((v) => !v)}
+          className={`text-[10px] font-bold uppercase px-2 py-1.5 rounded-md border shrink-0 ${
+            filterUnread
+              ? 'border-[var(--accent-amber)] text-[var(--accent-amber)] bg-[var(--accent-secondary-subtle)]'
+              : 'border-[var(--card-border)] text-[var(--text-muted)]'
+          }`}
+        >
+          Unread
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {loadingList ? (
+          <div className="flex justify-center py-10">
+            <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
+          </div>
+        ) : listItems.length === 0 ? (
+          <div className="p-6 text-center space-y-2">
+            <p className="text-sm text-[var(--text-muted)]">
+              {section === 'chats'
+                ? 'No conversations yet.'
+                : section === 'groups'
+                  ? 'You are not in any groups yet.'
+                  : 'You are not in any communities yet.'}
+            </p>
+            {(section === 'groups' || section === 'communities') && (
               <button
                 type="button"
-                className="md:hidden p-2 rounded-full hover:bg-[var(--card-inner-bg)]"
                 onClick={() => {
-                  setSelectedId(null);
-                  setSelectedGroupId(null);
-                  setMessages([]);
+                  setGroupKind(section === 'communities' ? 'community' : 'group');
+                  setShowNewGroup(true);
                 }}
+                className="btn-accent amber-pill-btn mt-2 px-4 py-2 rounded-full text-xs font-bold"
               >
-                <ArrowLeft className="w-4 h-4" />
+                Create {section === 'communities' ? 'community' : 'group'}
               </button>
             )}
+          </div>
+        ) : (
+          listItems.map((item) => {
+            const active =
+              (item.kind === 'dm' && selectedId === item.id) ||
+              ((item.kind === 'group' || item.kind === 'community') && selectedGroupId === item.id);
+            return (
+              <button
+                key={`${item.kind}-${item.id}`}
+                type="button"
+                onClick={() => {
+                  if (item.kind === 'dm') openDm(item.id);
+                  else openGroup(item.id);
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors border-b border-[var(--card-border)]/40 ${
+                  active
+                    ? 'bg-[var(--nav-item-hover)]'
+                    : 'hover:bg-[var(--card-inner-bg)]'
+                }`}
+              >
+                <div className="relative shrink-0">
+                  {item.kind === 'dm' ? (
+                    <UserAvatar
+                      name={item.name}
+                      src={(item.peer as any)?.avatarUrl || (item.peer as any)?.photoURL}
+                      size="md"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-[var(--card-inner-bg)] border border-[var(--card-border)] flex items-center justify-center">
+                      {item.kind === 'community' ? (
+                        <Hash className="w-4 h-4 text-[var(--accent-amber)]" />
+                      ) : (
+                        <Users className="w-4 h-4 text-[var(--accent-amber)]" />
+                      )}
+                    </div>
+                  )}
+                  {item.unread > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-[var(--accent-amber)] text-[var(--btn-on-accent)] text-[9px] font-bold flex items-center justify-center">
+                      {item.unread > 99 ? '99+' : item.unread}
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-[var(--text-primary)] truncate flex items-center gap-1">
+                      {item.kind === 'group' && (
+                        <Users className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
+                      )}
+                      {item.kind === 'community' && (
+                        <Hash className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
+                      )}
+                      {item.kind === 'dm' && (
+                        <User className="w-3 h-3 text-[var(--text-muted)] shrink-0 opacity-0" />
+                      )}
+                      {item.name}
+                    </span>
+                    <span className="text-[10px] text-[var(--text-muted)] shrink-0">
+                      {formatTime(item.at)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)] truncate mt-0.5">
+                    {item.kind !== 'dm' && item.memberCount > 0
+                      ? `${item.memberCount} members · ${item.preview || 'No messages yet'}`
+                      : item.preview || 'No messages yet'}
+                  </p>
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+
+  const ThreadPane = (
+    <div className="flex flex-col min-h-0 h-full flex-1">
+      {/* Conversation header */}
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-[var(--card-border)] shrink-0">
+        <button
+          type="button"
+          className="md:hidden p-2 rounded-full hover:bg-[var(--card-inner-bg)] text-[var(--text-primary)]"
+          onClick={closeThread}
+          aria-label="Back to list"
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </button>
+        {selectedGroup ? (
+          <>
+            <div className="w-9 h-9 rounded-full bg-[var(--card-inner-bg)] border border-[var(--card-border)] flex items-center justify-center shrink-0">
+              {selectedGroup.kind === 'community' ? (
+                <Hash className="w-4 h-4 text-[var(--accent-amber)]" />
+              ) : (
+                <Users className="w-4 h-4 text-[var(--accent-amber)]" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-bold text-[var(--text-primary)] truncate">
+                {selectedGroup.name}
+              </h3>
+              <p className="text-[11px] text-[var(--text-muted)] truncate">
+                {selectedGroup.kind === 'community' ? 'Community' : 'Group'} ·{' '}
+                {Array.isArray(selectedGroup.memberIds) ? selectedGroup.memberIds.length : 0}{' '}
+                members
+                {selectedGroup.description ? ` · ${selectedGroup.description}` : ''}
+              </p>
+            </div>
+          </>
+        ) : peer ? (
+          <>
+            <button
+              type="button"
+              className="shrink-0"
+              onClick={() => peerId && onNavigateToProfile?.(peerId)}
+            >
+              <UserAvatar
+                name={peer.name}
+                src={(peer as any)?.avatarUrl || (peer as any)?.photoURL}
+                size="md"
+              />
+            </button>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-bold text-[var(--text-primary)] truncate">
+                {peer.name || 'Chat'}
+              </h3>
+              <p className="text-[11px] text-[var(--text-muted)]">Direct message</p>
+            </div>
+          </>
+        ) : (
+          <h3 className="text-sm font-bold text-[var(--text-primary)]">Conversation</h3>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-h-0">
+        {messages.length === 0 ? (
+          <div className="h-full flex items-center justify-center">
+            <p className="text-sm text-[var(--text-muted)]">
+              No messages yet. Say hello.
+            </p>
+          </div>
+        ) : (
+          messages.map((m: any) => {
+            const mine = m.senderId === myUid;
+            return (
+              <div
+                key={m.id}
+                className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm break-words ${
+                    mine
+                      ? 'bg-[var(--accent-amber)] text-[var(--btn-on-accent)] rounded-br-md'
+                      : 'bg-[var(--card-inner-bg)] text-[var(--text-primary)] border border-[var(--card-border)] rounded-bl-md'
+                  }`}
+                >
+                  {!mine && selectedGroupId && (
+                    <p className="text-[10px] font-bold opacity-70 mb-0.5">
+                      {m.senderName || m.senderId?.slice(0, 8) || 'Member'}
+                    </p>
+                  )}
+                  {m.text ? <p className="whitespace-pre-wrap">{m.text}</p> : null}
+                  {renderMedia(m.media)}
+                  <p
+                    className={`text-[10px] mt-1 ${
+                      mine ? 'opacity-70' : 'text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {formatTime(m.createdAt)}
+                  </p>
+                </div>
+              </div>
+            );
+          })
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Composer */}
+      <div className="border-t border-[var(--card-border)] p-2 sm:p-3 shrink-0 space-y-2">
+        {pendingMedia && (
+          <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)] px-1">
+            <ImageIcon className="w-3.5 h-3.5" />
+            <span className="truncate flex-1">{pendingMedia.fileName || pendingMedia.kind}</span>
+            <button
+              type="button"
+              className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              onClick={() => setPendingMedia(null)}
+            >
+              Remove
+            </button>
+          </div>
+        )}
+        <div className="flex items-end gap-2">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="p-2.5 rounded-full hover:bg-[var(--card-inner-bg)] text-[var(--text-muted)] shrink-0"
+            aria-label="Attach"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
+          <input ref={fileRef} type="file" className="hidden" onChange={onPickFile} />
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            rows={1}
+            placeholder="Type a message"
+            className="flex-1 resize-none rounded-2xl bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--input-text)] text-sm px-3 py-2.5 outline-none focus:border-[var(--accent-amber)] max-h-28 min-h-[40px]"
+          />
+          <button
+            type="button"
+            disabled={sending || (!draft.trim() && !pendingMedia)}
+            onClick={handleSend}
+            className="btn-accent amber-pill-btn p-2.5 rounded-full shrink-0 disabled:opacity-50"
+            aria-label="Send"
+          >
+            {sending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Send className="w-4 h-4" />
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[80] flex justify-end">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/40"
+        aria-label="Close"
+        onClick={onClose}
+      />
+
+      {/* Wider panel on desktop for split list + conversation */}
+      <div className="relative w-full h-full md:max-w-3xl lg:max-w-4xl bg-[var(--card-bg)] border-l border-[var(--card-border)] shadow-2xl flex flex-col text-[var(--text-primary)]">
+        {/* Global header — always shows section context + close */}
+        <div className="flex items-center justify-between px-3 sm:px-4 py-3 border-b border-[var(--card-border)] shrink-0 gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <MessageSquare className="w-4 h-4 text-[var(--accent-amber)] shrink-0" />
             <h2 className="font-editorial text-base sm:text-lg font-bold text-[var(--text-primary)] truncate">
-              {selectedGroup
-                ? selectedGroup.name
-                : peer
-                  ? peer.name || 'Chat'
-                  : 'Messages'}
+              Messages
             </h2>
           </div>
           <div className="flex items-center gap-1">
-            {!inThread && (
-              <button
-                type="button"
-                title="New group"
-                onClick={() => setShowNewGroup(true)}
-                className="p-2 rounded-full hover:bg-[var(--card-inner-bg)] text-[var(--text-muted)]"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            )}
+            <button
+              type="button"
+              title="New group or community"
+              onClick={() => setShowNewGroup(true)}
+              className="p-2 rounded-full hover:bg-[var(--card-inner-bg)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-full hover:bg-[var(--card-inner-bg)] text-[var(--text-muted)]"
+              className="p-2 rounded-full hover:bg-[var(--card-inner-bg)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
-
-        {/* Tabs — list mode only */}
-        {!inThread && (
-          <div className="flex border-b border-[var(--card-border)] shrink-0">
-            {(['chats', 'groups'] as TabKey[]).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setTab(t)}
-                className={`flex-1 py-2.5 text-xs font-bold uppercase tracking-wide ${
-                  tab === t
-                    ? 'text-black border-b-2 border-black bg-white'
-                    : 'text-black/50 bg-transparent'
-                }`}
-              >
-                {t === 'chats' ? 'Chats' : 'Groups & communities'}
-              </button>
-            ))}
-          </div>
-        )}
 
         {error && (
           <div className="px-3 py-2 text-xs text-red-400 bg-red-500/10 border-b border-red-500/20">
@@ -392,319 +808,89 @@ export const MessengerDrawer: React.FC<MessengerDrawerProps> = ({
           </div>
         )}
 
+        {/* Body: list always available; conversation alongside on md+ */}
         <div className="flex-1 min-h-0 flex">
-          {/* Chat list — hidden on mobile when in a thread */}
+          {/* List column — ALWAYS mounted so Chats/Groups/Communities tabs stay reachable */}
           <div
             className={`${
               inThread ? 'hidden md:flex' : 'flex'
-            } w-full md:w-[42%] md:max-w-[280px] flex-col border-r border-[var(--card-border)] min-h-0`}
+            } w-full md:w-[38%] md:max-w-[320px] flex-col border-r border-[var(--card-border)] min-h-0`}
           >
-            <div className="flex-1 overflow-y-auto">
-              {loadingList ? (
-                <div className="flex justify-center py-10">
-                  <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
-                </div>
-              ) : tab === 'chats' ? (
-                accepted.length === 0 ? (
-                  <p className="p-4 text-sm text-[var(--text-muted)]">
-                    No chats yet. Accept a connection to start messaging.
-                  </p>
-                ) : (
-                  accepted.map((c) => {
-                    const pid = c.senderId === currentUser.id ? c.recipientId : c.senderId;
-                    const p = peers[pid];
-                    const unread = Number((c as any).unreadCounts?.[myUid] || 0);
-                    return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedId(c.id);
-                          setSelectedGroupId(null);
-                        }}
-                        className={`w-full flex items-center gap-3 px-3 py-3 text-left hover:bg-[var(--card-inner-bg)] border-b border-[var(--card-border)]/60 ${
-                          selectedId === c.id ? 'bg-[var(--card-inner-bg)]' : ''
-                        }`}
-                      >
-                        <UserAvatar
-                          name={p?.name || '?'}
-                          avatarUrl={(p as any)?.avatarUrl}
-                          size="md" className="shrink-0"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-semibold text-sm text-[var(--text-primary)] truncate">
-                              {p?.name || 'Creator'}
-                            </span>
-                            {unread > 0 && (
-                              <span className="text-[10px] font-bold rounded-full px-1.5 bg-black text-white" style={{ backgroundColor: '#000', color: '#fff' }}>
-                                {unread}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-[var(--text-muted)] truncate">
-                            {(c as any).lastMessageText || p?.primaryRole || 'Connected'}
-                          </p>
-                        </div>
-                      </button>
-                    );
-                  })
-                )
-              ) : groups.length === 0 ? (
-                <div className="p-4 space-y-3">
-                  <p className="text-sm text-[var(--text-muted)]">
-                    No groups yet. Create a group or community with your connections.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setShowNewGroup(true)}
-                    className="text-xs font-bold uppercase tracking-wide text-black underline"
-                  >
-                    + New group
-                  </button>
-                </div>
-              ) : (
-                groups.map((g) => (
-                  <button
-                    key={g.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedGroupId(g.id);
-                      setSelectedId(null);
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-3 text-left hover:bg-[var(--card-inner-bg)] border-b border-[var(--card-border)]/60 ${
-                      selectedGroupId === g.id ? 'bg-[var(--card-inner-bg)]' : ''
-                    }`}
-                  >
-                    <div className="w-10 h-10 rounded-full bg-[var(--card-inner-bg)] flex items-center justify-center shrink-0">
-                      <Users className="w-4 h-4 text-[var(--accent-amber)]" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-sm text-[var(--text-primary)] truncate">
-                        {g.name}
-                      </div>
-                      <p className="text-xs text-[var(--text-muted)] truncate">
-                        {g.kind} · {g.memberIds?.length || 0} members
-                        {g.lastMessageText ? ` · ${g.lastMessageText}` : ''}
-                      </p>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
+            {ListPane}
           </div>
 
-          {/* Thread */}
+          {/* Conversation column */}
           <div
             className={`${
               inThread ? 'flex' : 'hidden md:flex'
-            } flex-1 flex-col min-w-0 min-h-0 bg-[var(--app-bg,var(--card-bg))]`}
+            } flex-1 flex-col min-h-0 min-w-0`}
           >
-            {!inThread ? (
-              <div className="flex-1 flex items-center justify-center p-6 text-sm text-[var(--text-muted)] text-center">
-                Select a chat or group to start messaging
-              </div>
+            {inThread ? (
+              ThreadPane
             ) : (
-              <>
-                {/* Peer / group header actions */}
-                <div className="hidden md:flex items-center gap-2 px-3 py-2 border-b border-[var(--card-border)] shrink-0">
-                  {selectedGroup ? (
-                    <>
-                      <Users className="w-4 h-4 text-[var(--accent-amber)]" />
-                      <span className="text-sm font-semibold truncate">{selectedGroup.name}</span>
-                      <span className="text-[10px] uppercase text-[var(--text-muted)]">
-                        {selectedGroup.kind}
-                      </span>
-                    </>
-                  ) : peer ? (
-                    <button
-                      type="button"
-                      className="flex items-center gap-2 min-w-0"
-                      onClick={() => peer.id && onNavigateToProfile?.(peer.id)}
-                    >
-                      <UserAvatar name={peer.name} avatarUrl={(peer as any).avatarUrl} size="sm" />
-                      <span className="text-sm font-semibold truncate">{peer.name}</span>
-                    </button>
-                  ) : null}
-                </div>
-
-                <div className="flex-1 overflow-y-auto px-2 sm:px-3 py-3 space-y-2">
-                  {messages.map((msg) => {
-                    const mine = msg.senderId === myUid;
-                    const media = (msg as any).media as MessageMedia | undefined;
-                    return (
-                      <div
-                        key={msg.id}
-                        className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
-                      >
-                        <div
-                          className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-3 py-2 text-sm ${
-                            mine ? 'rounded-br-md' : 'rounded-bl-md border border-black/10'
-                          }`}
-                          style={
-                            mine
-                              ? { backgroundColor: '#000', color: '#fff' }
-                              : { backgroundColor: '#fff', color: '#000' }
-                          }
-                        >
-                          {msg.text && !(media && msg.text.startsWith('Sent ')) && (
-                            <p className="whitespace-pre-wrap break-words">{msg.text}</p>
-                          )}
-                          {renderMedia(media)}
-                          <p
-                            className={`text-[10px] mt-1 ${
-                              mine ? 'text-white/70' : 'text-black/50'
-                            }`}
-                          >
-                            {msg.createdAt
-                              ? new Date(msg.createdAt).toLocaleTimeString([], {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })
-                              : ''}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <div ref={bottomRef} />
-                </div>
-
-                {/* Composer */}
-                <div className="border-t border-[var(--card-border)] p-2 sm:p-3 shrink-0 safe-area-pb">
-                  {pendingMedia && (
-                    <div className="mb-2 flex items-center gap-2 text-xs bg-[var(--card-inner-bg)] rounded-lg px-2 py-1.5">
-                      {pendingMedia.kind === 'image' ? (
-                        <ImageIcon className="w-3.5 h-3.5" />
-                      ) : pendingMedia.kind === 'audio' ? (
-                        <Mic className="w-3.5 h-3.5" />
-                      ) : (
-                        <FileText className="w-3.5 h-3.5" />
-                      )}
-                      <span className="truncate flex-1">{pendingMedia.fileName || pendingMedia.kind}</span>
-                      <button type="button" className="underline" onClick={() => setPendingMedia(null)}>
-                        Remove
-                      </button>
-                    </div>
-                  )}
-                  <div className="flex items-end gap-1.5 sm:gap-2">
-                    <input
-                      ref={fileRef}
-                      type="file"
-                      className="hidden"
-                      accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip"
-                      onChange={onPickFile}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => fileRef.current?.click()}
-                      className="p-2.5 rounded-full hover:bg-[var(--card-inner-bg)] text-[var(--text-muted)] shrink-0"
-                      title="Attach"
-                    >
-                      <Paperclip className="w-4 h-4" />
-                    </button>
-                    <textarea
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      rows={1}
-                      placeholder="Message"
-                      className="flex-1 resize-none rounded-2xl bg-[var(--card-inner-bg)] border border-[var(--card-border)] px-3 py-2.5 text-sm text-[var(--text-primary)] max-h-28 min-h-[40px]"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          handleSend();
-                        }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      disabled={sending || (!draft.trim() && !pendingMedia)}
-                      onClick={handleSend}
-                      className="btn-primary p-2.5 rounded-full disabled:opacity-40 shrink-0"
-                    >
-                      {sending ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Send className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </>
+              <div className="hidden md:flex flex-1 items-center justify-center text-[var(--text-muted)] text-sm px-6 text-center">
+                Select a conversation from Chats, Groups, or Communities.
+              </div>
             )}
           </div>
         </div>
 
-        {/* New group modal */}
+        {/* Mobile: when in thread, still expose section switcher as a compact bar */}
+        {inThread && (
+          <div className="md:hidden border-t border-[var(--card-border)] shrink-0">
+            {SectionTabs}
+          </div>
+        )}
+
+        {/* New group / community modal */}
         {showNewGroup && (
           <div className="absolute inset-0 z-10 flex items-end sm:items-center justify-center bg-black/50 p-3">
-            <div className="w-full max-w-md rounded-2xl bg-[var(--card-bg)] border border-[var(--card-border)] p-4 space-y-3">
-              <h3 className="font-bold text-[var(--text-primary)]">New group / community</h3>
-              <input
-                value={groupName}
-                onChange={(e) => setGroupName(e.target.value)}
-                placeholder="Name"
-                className="w-full rounded-xl border border-[var(--card-border)] bg-[var(--card-inner-bg)] px-3 py-2 text-sm"
-              />
+            <div className="w-full max-w-md rounded-2xl bg-[var(--card-bg)] border border-[var(--card-border)] p-4 space-y-3 shadow-xl">
+              <div className="flex items-center justify-between">
+                <h3 className="font-editorial font-bold text-[var(--text-primary)]">
+                  Create {groupKind === 'community' ? 'community' : 'group'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowNewGroup(false)}
+                  className="p-1 text-[var(--text-muted)]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
               <div className="flex gap-2">
                 {(['group', 'community'] as const).map((k) => (
                   <button
                     key={k}
                     type="button"
                     onClick={() => setGroupKind(k)}
-                    className="flex-1 py-2 rounded-xl text-xs font-bold uppercase border border-black"
-                    style={
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase border ${
                       groupKind === k
-                        ? { backgroundColor: '#000', color: '#fff' }
-                        : { backgroundColor: '#fff', color: '#000' }
-                    }
+                        ? 'border-[var(--accent-amber)] text-[var(--accent-amber)] bg-[var(--accent-secondary-subtle)]'
+                        : 'border-[var(--card-border)] text-[var(--text-muted)]'
+                    }`}
                   >
                     {k}
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-[var(--text-muted)]">Add members from your connections</p>
-              <div className="max-h-40 overflow-y-auto space-y-1">
-                {accepted.map((c) => {
-                  const pid = c.senderId === currentUser.id ? c.recipientId : c.senderId;
-                  const p = peers[pid];
-                  const on = groupMembers.includes(pid);
-                  return (
-                    <label
-                      key={c.id}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--card-inner-bg)] text-sm cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        onChange={() =>
-                          setGroupMembers((prev) =>
-                            on ? prev.filter((x) => x !== pid) : [...prev, pid]
-                          )
-                        }
-                      />
-                      <span className="truncate">{p?.name || pid}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              <div className="flex gap-2 justify-end">
-                <button
-                  type="button"
-                  className="px-3 py-2 text-xs font-bold uppercase border border-black/20 bg-white text-black rounded-full"
-                  onClick={() => setShowNewGroup(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={!groupName.trim() || sending}
-                  onClick={handleCreateGroup}
-                  className="btn-primary px-4 py-2 rounded-full text-xs font-bold uppercase disabled:opacity-40"
-                >
-                  Create
-                </button>
-              </div>
+              <input
+                value={groupName}
+                onChange={(e) => setGroupName(e.target.value)}
+                placeholder="Name"
+                className="w-full rounded-lg bg-[var(--input-bg)] border border-[var(--input-border)] text-[var(--input-text)] text-sm px-3 py-2 outline-none"
+              />
+              <p className="text-[11px] text-[var(--text-muted)]">
+                You will be added as admin. Invite more members from the conversation later.
+              </p>
+              <button
+                type="button"
+                disabled={sending || !groupName.trim()}
+                onClick={handleCreateGroup}
+                className="btn-accent amber-pill-btn w-full py-2.5 rounded-full text-xs font-bold disabled:opacity-50"
+              >
+                {sending ? 'Creating…' : 'Create'}
+              </button>
             </div>
           </div>
         )}
